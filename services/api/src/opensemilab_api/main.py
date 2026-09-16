@@ -4,6 +4,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from opensemilab_api import __version__
+from opensemilab_api.design import DesignPlan, DesignRequest, DesignTemplate, TEMPLATES, make_plan
 from opensemilab_api.engines import ENGINES
 from opensemilab_api.models import EngineCapability, Experiment, SimulationResult
 
@@ -29,6 +30,16 @@ def health() -> dict[str, str]:
 @app.get("/api/v1/engines", response_model=list[EngineCapability])
 def list_engines() -> list[EngineCapability]:
     return [engine.capability() for engine in ENGINES.values()]
+
+
+@app.get("/api/v1/design/templates", response_model=list[DesignTemplate])
+def list_design_templates() -> list[DesignTemplate]:
+    return TEMPLATES
+
+
+@app.post("/api/v1/design/plan", response_model=DesignPlan)
+def create_design_plan(project: DesignRequest) -> DesignPlan:
+    return make_plan(project)
 
 
 @app.post("/api/v1/simulations/pn-junction", response_model=SimulationResult)

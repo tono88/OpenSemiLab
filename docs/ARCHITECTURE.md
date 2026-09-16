@@ -14,6 +14,13 @@
 
 The React application owns progressive disclosure, educational narrative, experiment editing, and visualization. It does not calculate authoritative scientific results.
 
+The interface has two first-class workspaces:
+
+- **Design Studio** starts from an engineering outcome (SoC, sensor interface, analog/RF block, reusable IP, or FPGA prototype), then builds a staged toolchain and reproducible manifest.
+- **Device Lab** starts from semiconductor physics and exposes progressively deeper model and numerical controls.
+
+Design Studio intentionally maps outcomes to tools instead of reproducing the desktop menus of IIC-OSIC-TOOLS. Native tools remain behind adapters and isolated workers.
+
 ### Orchestration API
 
 FastAPI validates experiment contracts, discovers engine capabilities, selects adapters, normalizes output, and attaches provenance.

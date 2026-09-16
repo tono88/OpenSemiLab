@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { simulate } from './api'
 import { Plot } from './Plot'
+import DesignStudio from './DesignStudio'
 import type { Experiment, Mode, SimulationResult } from './types'
 
 const MODES: Mode[] = ['Explore', 'Learn', 'Design', 'Advanced', 'Research']
@@ -15,6 +16,7 @@ function NumberField({ label, value, unit, onChange, step = 'any' }: { label: st
 }
 
 function App() {
+  const [area, setArea] = useState<'design' | 'lab'>('design')
   const [mode, setMode] = useState<Mode>('Explore')
   const [experiment, setExperiment] = useState(defaults)
   const [result, setResult] = useState<SimulationResult | null>(null)
@@ -34,8 +36,8 @@ function App() {
   const updateDevice = (patch: Partial<Experiment['device']>) => setExperiment(e => ({ ...e, device: { ...e.device, ...patch } }))
 
   return <div className="app-shell">
-    <header><div className="brand"><div className="mark">OS</div><div><strong>OpenSemiLab</strong><small>Semiconductor laboratory</small></div></div><div className="engine"><i/> Educational engine <span>v0.1</span></div></header>
-    <nav className="modes" aria-label="Interface depth">
+    <header><div className="brand"><div className="mark">OS</div><div><strong>OpenSemiLab</strong><small>Semiconductor laboratory</small></div></div><nav className="primary-nav"><button className={area==='design'?'active':''} onClick={()=>setArea('design')}>Design Studio</button><button className={area==='lab'?'active':''} onClick={()=>setArea('lab')}>Device Lab</button></nav><div className="engine"><i/> Local workspace <span>v0.2</span></div></header>
+    {area === 'lab' ? <><nav className="modes" aria-label="Interface depth">
       {MODES.map((item, i) => <button className={mode === item ? 'active' : ''} onClick={() => setMode(item)} key={item}><em>0{i + 1}</em>{item}</button>)}
     </nav>
 
@@ -70,7 +72,7 @@ function App() {
 
       {depth >= 3 && result && <section className="technical"><div><p className="eyebrow">MODEL TRANSPARENCY</p><h2>Nothing important is hidden.</h2></div><dl><div><dt>Model</dt><dd>{result.provenance.model}</dd></div><div><dt>Authority</dt><dd>{result.provenance.authoritative ? 'Validated engine' : 'Educational — not sign-off'}</dd></div><div><dt>Input fingerprint</dt><dd className="mono">{result.provenance.input_sha256.slice(0, 20)}…</dd></div></dl></section>}
       {depth >= 4 && <section className="raw"><div><p className="eyebrow">REPRODUCIBLE MANIFEST</p><h2>Exact experiment input</h2></div><pre>{JSON.stringify(experiment, null, 2)}</pre></section>}
-    </main>
+    </main></> : <DesignStudio/>}
     <footer><span>OPEN SCIENCE · HONEST FIDELITY · REPRODUCIBLE RESULTS</span><a href="https://github.com/tono88/OpenSemiLab">GitHub ↗</a></footer>
   </div>
 }

@@ -41,3 +41,22 @@ def test_unavailable_devsim_is_explicit():
     )
     assert response.status_code == 409
     assert "DEVSIM" in response.json()["detail"]
+
+
+def test_design_templates_cover_major_flows():
+    response = client.get("/api/v1/design/templates")
+    assert response.status_code == 200
+    kinds = {item["id"] for item in response.json()}
+    assert {"microcontroller", "sensor_interface", "analog_block", "rf_frontend"} <= kinds
+
+
+def test_microcontroller_plan_connects_rtl_to_gds():
+    response = client.post("/api/v1/design/plan", json={
+        "name": "Teaching MCU", "kind": "microcontroller", "pdk": "sky130A",
+        "level": "engineering", "language": "systemverilog"
+    })
+    assert response.status_code == 200
+    result = response.json()
+    assert result["runner_available"] is False
+    tools = {tool for stage in result["stages"] for tool in stage["tools"]}
+    assert {"Yosys", "LibreLane", "OpenROAD", "KLayout"} <= tools

@@ -22,6 +22,10 @@ Open-source EDA and multiphysics tools are powerful, but they expose different i
 
 ## Current vertical slice
 
+- Enter a dedicated **Design Studio** for complete IC and system projects.
+- Create a tool-aware design plan for microcontrollers/SoCs, smart sensor interfaces, analog blocks, RF front-ends, standard cells/IP, and FPGA prototypes.
+- Select SKY130, GF180MCU, IHP SG13G2, or IHP SG13CMOS5L and generate a reproducible staged manifest.
+- Map each stage to relevant IIC-OSIC-TOOLS engines while clearly marking the isolated execution runner as pending.
 - Create and configure a 1D silicon PN junction.
 - Change doping, length, temperature, area, bias range, and mesh density.
 - Run a deterministic drift-diffusion-inspired educational approximation.
@@ -97,12 +101,12 @@ The built-in solver is intentionally labeled **educational**. It produces transp
 
 ## Roadmap
 
-1. Execute a validated DEVSIM diode experiment and normalize its output.
-2. Add authentication-free local projects and JSON export/import.
-3. Add MOS capacitor and MOSFET experiment templates.
-4. Integrate Gmsh plus VTK field visualization.
-5. Add electro-thermal adapters for MOOSE/FEniCSx.
-6. Connect analog and digital flows from IIC-OSIC-TOOLS through isolated workers.
+1. Connect Design Studio manifests to isolated IIC-OSIC-TOOLS workers.
+2. Execute a validated DEVSIM diode experiment and normalize its output.
+3. Add authentication-free local projects and JSON export/import.
+4. Add MOS capacitor and MOSFET experiment templates.
+5. Integrate Gmsh plus VTK field visualization.
+6. Add electro-thermal adapters for MOOSE/FEniCSx.
 
 ## Contributing
 
