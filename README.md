@@ -6,6 +6,8 @@ OpenSemiLab presents one coherent workflow on top of open scientific engines. A 
 
 > Status: foundation release. The PN-junction vertical slice is usable end to end with a deterministic educational solver. A DEVSIM adapter boundary is included for the next integration step.
 
+The digital Design Studio now executes **real lint, simulation, and synthesis** inside an isolated IIC-OSIC-TOOLS worker. RTL-to-GDSII, analog, RF, and physical-verification execution remain staged integrations and are visibly marked as such.
+
 ## Why this project
 
 Open-source EDA and multiphysics tools are powerful, but they expose different interfaces, data formats, and assumptions. OpenSemiLab does not replace those engines. It creates a common project model, progressive interface, orchestration API, and reproducible result format around them.
@@ -25,7 +27,9 @@ Open-source EDA and multiphysics tools are powerful, but they expose different i
 - Enter a dedicated **Design Studio** for complete IC and system projects.
 - Create a tool-aware design plan for microcontrollers/SoCs, smart sensor interfaces, analog blocks, RF front-ends, standard cells/IP, and FPGA prototypes.
 - Select SKY130, GF180MCU, IHP SG13G2, or IHP SG13CMOS5L and generate a reproducible staged manifest.
-- Map each stage to relevant IIC-OSIC-TOOLS engines while clearly marking the isolated execution runner as pending.
+- Map each stage to relevant IIC-OSIC-TOOLS engines while clearly distinguishing connected and pending adapters.
+- Edit SystemVerilog in the browser and run Verible/Verilator lint, Icarus Verilog simulation, and Yosys synthesis in IIC-OSIC-TOOLS.
+- Download the synthesized Yosys JSON netlist and inspect complete console output.
 - Create and configure a 1D silicon PN junction.
 - Change doping, length, temperature, area, bias range, and mesh density.
 - Run a deterministic drift-diffusion-inspired educational approximation.
@@ -57,6 +61,8 @@ The engine boundary is deliberate: copyleft tools can run as separate processes 
 ```bash
 docker compose up --build
 ```
+
+The first build downloads the IIC-OSIC-TOOLS image, which is substantially larger than the web/API images and can take considerable time. Later starts reuse Docker's local cache.
 
 Open <http://localhost:5173>. The API documentation is at <http://localhost:8000/docs>.
 
@@ -90,6 +96,7 @@ cd apps/web && npm run build
 ```text
 apps/web/             Progressive React interface
 services/api/         FastAPI orchestration and simulation adapters
+services/eda-worker/  Constrained IIC-OSIC-TOOLS execution bridge
 docs/                 Architecture, pedagogy, licensing, roadmap
 examples/             Versioned experiment examples
 .github/workflows/    CI for API tests and web builds
@@ -101,12 +108,12 @@ The built-in solver is intentionally labeled **educational**. It produces transp
 
 ## Roadmap
 
-1. Connect Design Studio manifests to isolated IIC-OSIC-TOOLS workers.
-2. Execute a validated DEVSIM diode experiment and normalize its output.
-3. Add authentication-free local projects and JSON export/import.
-4. Add MOS capacitor and MOSFET experiment templates.
-5. Integrate Gmsh plus VTK field visualization.
-6. Add electro-thermal adapters for MOOSE/FEniCSx.
+1. Extend the connected worker from RTL synthesis to LibreLane/OpenROAD physical design.
+2. Connect Xschem/ngspice project manifests and normalized waveform results.
+3. Execute a validated DEVSIM diode experiment and normalize its output.
+4. Add authentication-free local projects and JSON export/import.
+5. Add MOS capacitor and MOSFET experiment templates.
+6. Integrate Gmsh, VTK, and electro-thermal adapters.
 
 ## Contributing
 

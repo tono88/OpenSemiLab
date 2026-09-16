@@ -29,6 +29,10 @@ FastAPI validates experiment contracts, discovers engine capabilities, selects a
 
 Adapters implement a small interface: capability metadata and `run(experiment)`. The current `EducationalPNEngine` is in-process. DEVSIM and later engines will be externalized behind the same boundary.
 
+### IIC-OSIC execution worker
+
+The EDA worker derives from the IIC-OSIC-TOOLS image and exposes only named workflows; it does not expose a browser-accessible shell or Docker socket. The first connected workflows are RTL lint, Icarus Verilog simulation, and Yosys synthesis. Jobs have source-size, filename, process, CPU, memory, output, and timeout limits. Temporary workspaces are destroyed after every job.
+
 ### Future worker boundary
 
 Production scientific engines should execute in per-job containers. The API will submit immutable experiment manifests to a queue, and workers will return a normalized result bundle. This prevents solver dependencies and licenses from leaking into the web/API images.

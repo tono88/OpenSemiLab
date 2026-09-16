@@ -1,10 +1,12 @@
 import os
 
+import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from opensemilab_api import __version__
 from opensemilab_api.design import DesignPlan, DesignRequest, DesignTemplate, TEMPLATES, make_plan
+from opensemilab_api.eda import EdaRunRequest
 from opensemilab_api.engines import ENGINES
 from opensemilab_api.models import EngineCapability, Experiment, SimulationResult
 
@@ -14,6 +16,7 @@ app = FastAPI(
     description="Engine-neutral semiconductor experiment orchestration.",
 )
 origins = os.getenv("OPENSEMILAB_CORS_ORIGINS", "http://localhost:5173").split(",")
+eda_worker_url = os.getenv("OPENSEMILAB_EDA_WORKER_URL", "http://localhost:9000").rstrip("/")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in origins],
@@ -40,6 +43,30 @@ def list_design_templates() -> list[DesignTemplate]:
 @app.post("/api/v1/design/plan", response_model=DesignPlan)
 def create_design_plan(project: DesignRequest) -> DesignPlan:
     return make_plan(project)
+
+
+@app.get("/api/v1/eda/capabilities")
+def eda_capabilities() -> dict:
+    try:
+        response = httpx.get(f"{eda_worker_url}/health", timeout=5)
+        response.raise_for_status()
+        return response.json()
+    except (httpx.HTTPError, ValueError) as error:
+        raise HTTPException(status_code=503, detail=f"IIC-OSIC worker unavailable: {error}") from error
+
+
+@app.post("/api/v1/eda/run")
+def run_eda_action(request: EdaRunRequest) -> dict:
+    try:
+        response = httpx.post(f"{eda_worker_url}/run", json=request.model_dump(), timeout=100)
+        if response.status_code >= 400:
+            detail = response.json().get("error", response.text)
+            raise HTTPException(status_code=response.status_code, detail=detail)
+        return response.json()
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, ValueError) as error:
+        raise HTTPException(status_code=503, detail=f"IIC-OSIC worker unavailable: {error}") from error
 
 
 @app.post("/api/v1/simulations/pn-junction", response_model=SimulationResult)
