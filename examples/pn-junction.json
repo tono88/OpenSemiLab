@@ -1,0 +1,15 @@
+{
+  "name": "Introductory silicon PN junction",
+  "engine": "educational",
+  "device": {
+    "kind": "pn_junction_1d",
+    "material": "silicon",
+    "length_um": 2.0,
+    "area_um2": 100.0,
+    "acceptor_cm3": 1e16,
+    "donor_cm3": 1e16,
+    "temperature_k": 300.0
+  },
+  "sweep": { "start_v": -1.0, "stop_v": 0.8, "points": 73 },
+  "numerics": { "mesh_points": 201, "relative_tolerance": 1e-8, "max_iterations": 80 }
+}

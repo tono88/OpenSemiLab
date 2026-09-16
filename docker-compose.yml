@@ -1,0 +1,13 @@
+services:
+  api:
+    build: ./services/api
+    ports:
+      - "8000:8000"
+    environment:
+      OPENSEMILAB_CORS_ORIGINS: http://localhost:5173
+  web:
+    build: ./apps/web
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
