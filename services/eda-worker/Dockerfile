@@ -3,6 +3,11 @@ FROM hpretl/iic-osic-tools:latest
 USER root
 WORKDIR /opt/opensemilab-worker
 COPY worker.py ./worker.py
-ENV OPENSEMILAB_WORK_ROOT=/tmp/opensemilab-jobs
+COPY entrypoint.sh ./entrypoint.sh
+RUN chmod 755 ./entrypoint.sh
+ENV HOME=/headless \
+    USER=designer \
+    OPENSEMILAB_WORK_ROOT=/tmp/opensemilab-jobs
 EXPOSE 9000
-ENTRYPOINT ["python3", "/opt/opensemilab-worker/worker.py"]
+USER 1000:1000
+ENTRYPOINT ["/opt/opensemilab-worker/entrypoint.sh"]

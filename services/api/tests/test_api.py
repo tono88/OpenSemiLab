@@ -57,6 +57,7 @@ def test_microcontroller_plan_connects_rtl_to_gds():
     })
     assert response.status_code == 200
     result = response.json()
-    assert result["runner_available"] is False
+    assert result["runner_available"] is True
+    assert "lint, simulation and synthesis" in result["notice"]
     tools = {tool for stage in result["stages"] for tool in stage["tools"]}
     assert {"Yosys", "LibreLane", "OpenROAD", "KLayout"} <= tools

@@ -48,7 +48,7 @@ interface RunResult { job_id: string; action: string; engine: string; success: b
 export default function DigitalWorkbench() {
   const [rtl, setRtl] = useState(DEFAULT_RTL)
   const [testbench, setTestbench] = useState(DEFAULT_TB)
-  const [worker, setWorker] = useState<'checking'|'online'|'offline'>('checking')
+  const [worker, setWorker] = useState<'checking'|'online'|'degraded'|'offline'>('checking')
   const [tools, setTools] = useState<Record<string,{available:boolean}>>({})
   const [running, setRunning] = useState('')
   const [result, setResult] = useState<RunResult | null>(null)
@@ -56,7 +56,7 @@ export default function DigitalWorkbench() {
 
   async function refresh() {
     setWorker('checking')
-    try { const r=await fetch('/api/v1/eda/capabilities'); if(!r.ok) throw new Error(); const body=await r.json(); setTools(body.tools); setWorker('online') }
+    try { const r=await fetch('/api/v1/eda/capabilities'); if(!r.ok) throw new Error(); const body=await r.json(); setTools(body.tools??{}); setWorker(body.ready?'online':'degraded') }
     catch { setWorker('offline') }
   }
   useEffect(()=>{void refresh()},[])
@@ -73,11 +73,22 @@ export default function DigitalWorkbench() {
     const url=URL.createObjectURL(new Blob([artifact.content],{type:artifact.media_type})); const link=document.createElement('a'); link.href=url; link.download=artifact.name; link.click(); URL.revokeObjectURL(url)
   }
 
+  const lintAvailable=Boolean(tools.verible_lint?.available||tools.verilator?.available)
+  const simulationAvailable=Boolean(tools.iverilog?.available&&tools.vvp?.available)
+  const synthesisAvailable=Boolean(tools.yosys?.available)
+  const workerMessage=worker==='online'
+    ? 'IIC-OSIC worker online · RTL toolchain ready'
+    : worker==='degraded'
+      ? 'Worker connected · required RTL tools are missing from PATH'
+      : worker==='checking'
+        ? 'Checking IIC-OSIC worker…'
+        : 'Worker offline — rebuild the Docker stack to enable execution'
+
   return <section className="workbench">
     <div className="section-heading"><span>04</span><div><h2>RTL workbench</h2><p>Edit real SystemVerilog and execute command-line tools inside IIC-OSIC-TOOLS.</p></div></div>
-    <div className={`worker-state ${worker}`}><i/>{worker==='online'?'IIC-OSIC worker online':worker==='checking'?'Checking IIC-OSIC worker…':'Worker offline — rebuild the Docker stack to enable execution'}<button onClick={refresh}>Check again</button></div>
+    <div className={`worker-state ${worker}`}><i/>{workerMessage}<button onClick={refresh}>Check again</button></div>
     <div className="editor-grid"><label><span>design.sv · synthesized design</span><textarea value={rtl} onChange={e=>setRtl(e.target.value)} spellCheck={false}/></label><label><span>tb.sv · simulation testbench</span><textarea value={testbench} onChange={e=>setTestbench(e.target.value)} spellCheck={false}/></label></div>
-    <div className="action-bar"><button disabled={worker!=='online'||!!running} onClick={()=>run('lint')}><span>01</span>{running==='lint'?'Running…':'Lint RTL'}<small>{tools.verible_lint?.available?'Verible':'Verilator'}</small></button><button disabled={worker!=='online'||!!running} onClick={()=>run('simulate')}><span>02</span>{running==='simulate'?'Running…':'Simulate'}<small>Icarus Verilog</small></button><button disabled={worker!=='online'||!!running} onClick={()=>run('synthesize')}><span>03</span>{running==='synthesize'?'Running…':'Synthesize'}<small>Yosys</small></button></div>
+    <div className="action-bar"><button disabled={!lintAvailable||!!running} onClick={()=>run('lint')}><span>01</span>{running==='lint'?'Running…':'Lint RTL'}<small>{lintAvailable?(tools.verible_lint?.available?'Verible':'Verilator'):'Unavailable'}</small></button><button disabled={!simulationAvailable||!!running} onClick={()=>run('simulate')}><span>02</span>{running==='simulate'?'Running…':'Simulate'}<small>{simulationAvailable?'Icarus Verilog':'Unavailable'}</small></button><button disabled={!synthesisAvailable||!!running} onClick={()=>run('synthesize')}><span>03</span>{running==='synthesize'?'Running…':'Synthesize'}<small>{synthesisAvailable?'Yosys':'Unavailable'}</small></button></div>
     {error&&<p className="error">{error}</p>}
     {result&&<div className="console"><div><span>{result.engine} · job {result.job_id} · {result.duration_ms} ms</span><b className={result.success?'success':'failed'}>{result.success?'PASSED':'FAILED'} · EXIT {result.exit_code}</b></div><pre>{result.output||'Command completed without console output.'}</pre>{result.artifacts.map(artifact=><button key={artifact.name} onClick={()=>download(artifact)}>Download {artifact.name} ↓</button>)}</div>}
   </section>

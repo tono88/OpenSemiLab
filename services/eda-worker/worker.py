@@ -30,6 +30,7 @@ TOOL_BINARIES = {
     "verible_lint": "verible-verilog-lint",
     "yosys": "yosys",
     "iverilog": "iverilog",
+    "vvp": "vvp",
     "ghdl": "ghdl",
     "librelane": "librelane",
     "openroad": "openroad",
@@ -44,8 +45,27 @@ TOOL_BINARIES = {
 
 
 def capabilities() -> dict[str, Any]:
-    tools = {name: {"available": shutil.which(binary) is not None, "binary": binary} for name, binary in TOOL_BINARIES.items()}
-    return {"worker": "iic-osic-tools", "ready": True, "tools": tools, "actions": ["lint", "simulate", "synthesize"]}
+    tools = {}
+    for name, binary in TOOL_BINARIES.items():
+        path = shutil.which(binary)
+        tools[name] = {"available": path is not None, "binary": binary, "path": path}
+
+    actions = {
+        "lint": tools["verible_lint"]["available"] or tools["verilator"]["available"],
+        "simulate": tools["iverilog"]["available"] and tools["vvp"]["available"],
+        "synthesize": tools["yosys"]["available"],
+    }
+    return {
+        "worker": "iic-osic-tools",
+        "worker_version": "0.2.0",
+        "ready": all(actions.values()),
+        "actions": actions,
+        "tools": tools,
+        "environment": {
+            "tools_root": os.getenv("TOOLS"),
+            "pdk_root": os.getenv("PDK_ROOT") or os.getenv("PDKPATH"),
+        },
+    }
 
 
 def validate_sources(raw: Any) -> dict[str, str]:
@@ -100,22 +120,24 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
                 command = [binary, "--ruleset=default", *source_names]
                 engine = "verible-verilog-lint"
             else:
+                if not shutil.which(TOOL_BINARIES["verilator"]):
+                    raise RuntimeError("neither Verible nor Verilator is available after IIC-OSIC environment initialization")
                 command = [TOOL_BINARIES["verilator"], "--lint-only", "--Wall", "-Wno-fatal", "--top-module", top, *source_names]
                 engine = "verilator"
         elif action == "simulate":
-            if not shutil.which(TOOL_BINARIES["iverilog"]):
-                raise RuntimeError("iverilog is not available in this worker image")
+            if not shutil.which(TOOL_BINARIES["iverilog"]) or not shutil.which(TOOL_BINARIES["vvp"]):
+                raise RuntimeError("Icarus Verilog (iverilog/vvp) is unavailable after IIC-OSIC environment initialization")
             command = [TOOL_BINARIES["iverilog"], "-g2012", "-s", top, "-o", "simulation.vvp", *source_names]
             compile_result = run_command(command, job_dir)
             if compile_result["exit_code"] != 0:
                 return {"job_id": job_id, "action": action, "engine": "iverilog", "success": False, **compile_result, "artifacts": []}
-            result = run_command(["vvp", "simulation.vvp"], job_dir)
+            result = run_command([TOOL_BINARIES["vvp"], "simulation.vvp"], job_dir)
             result["output"] = "COMPILE\n" + compile_result["output"] + "\nSIMULATION\n" + result["output"]
             result["duration_ms"] += compile_result["duration_ms"]
             return {"job_id": job_id, "action": action, "engine": "iverilog/vvp", "success": result["exit_code"] == 0, **result, "artifacts": []}
         else:
             if not shutil.which(TOOL_BINARIES["yosys"]):
-                raise RuntimeError("yosys is not available in this worker image")
+                raise RuntimeError("Yosys is unavailable after IIC-OSIC environment initialization")
             script = f"read_verilog -sv {' '.join(source_names)}; hierarchy -check -top {top}; proc; opt; check; stat; write_json netlist.json"
             command = [TOOL_BINARIES["yosys"], "-p", script]
             engine = "yosys"

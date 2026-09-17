@@ -60,6 +60,7 @@ def stage(id: str, title: str, purpose: str, tools: list[str], output: str, stat
 
 
 def make_plan(project: DesignRequest) -> DesignPlan:
+    rtl_runner_available = project.kind in {"microcontroller", "fpga_prototype"}
     flows: dict[str, list[DesignStage]] = {
         "microcontroller": [
             stage("architecture", "Architecture & IP", "Define CPU, memories, buses, registers and peripherals.", ["FuseSoC", "Kactus2", "RISC-V toolchain", "rggen"], "IP-XACT and core manifest"),
@@ -104,6 +105,11 @@ def make_plan(project: DesignRequest) -> DesignPlan:
         project=project,
         stages=flows[project.kind],
         runner="IIC-OSIC-TOOLS isolated worker",
-        runner_available=False,
-        notice="The design plan is reproducible, but execution remains disabled until the isolated IIC-OSIC worker is connected.",
+        runner_available=rtl_runner_available,
+        notice=(
+            "RTL lint, simulation and synthesis are executable in the isolated IIC-OSIC worker. "
+            "Physical implementation and signoff adapters remain in development."
+            if rtl_runner_available
+            else "This engineering flow is planned; its isolated execution adapter remains in development."
+        ),
     )

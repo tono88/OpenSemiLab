@@ -1,0 +1,8 @@
+.worker-state.degraded {
+  color: #ffae7a;
+}
+
+.worker-state.degraded i {
+  background: #ff7676;
+  box-shadow: 0 0 10px #ff767688;
+}
