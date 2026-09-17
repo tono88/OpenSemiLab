@@ -24,7 +24,7 @@ OpenSemiLab project
 
 - Type: ${kind}
 - PDK: ${pdk}
-- Schema: opensemilab.project/v1
+- Schema: opensemilab.project/v3
 
 ## Structure
 
@@ -39,7 +39,9 @@ const executionByKind:Record<string,Record<string,string>>={
   standard_cell:{rtl_top:'inverter',testbench_top:'tb_inverter',spice_entry:'simulation/tb_inverter.spice'},
 }
 
-const manifest = (name:string, kind:string, pdk:string) => JSON.stringify({schema:'opensemilab.project/v2',name,kind,pdk,execution:executionByKind[kind]??{}},null,2)+'\n'
+const defaultPhysical={clock_port:'clk',clock_period_ns:10,die_width_um:120,die_height_um:120,core_utilization_pct:40}
+const manifestObject = (name:string,kind:string,pdk:string) => ({schema:'opensemilab.project/v3',name,kind,pdk,execution:executionByKind[kind]??{},physical:defaultPhysical})
+const manifest = (name:string, kind:string, pdk:string) => JSON.stringify(manifestObject(name,kind,pdk),null,2)+'\n'
 
 export function starterFiles(kind:string,name:string,pdk:string):ProjectFile[] {
   const common:ProjectFile[]=[
@@ -209,9 +211,21 @@ export function loadProjects():StoredProject[] {
     const upgraded=projects.map(project=>{
       const starters=starterFiles(project.kind,project.name,project.pdk)
       const missing=starters.filter(file=>!project.files.some(existing=>existing.path===file.path))
-      if(!missing.length) return project
-      changed=true
-      return {...project,files:[...project.files,...missing]}
+      let files=[...project.files,...missing]
+      const manifestIndex=files.findIndex(file=>file.path==='project.json')
+      if(manifestIndex>=0) {
+        try {
+          const parsed=JSON.parse(files[manifestIndex].content)
+          if(parsed.schema!=='opensemilab.project/v3'||!parsed.execution||!parsed.physical) {
+            const baseline=manifestObject(project.name,project.kind,project.pdk)
+            files[manifestIndex]={...files[manifestIndex],content:JSON.stringify({...baseline,...parsed,schema:baseline.schema,execution:parsed.execution??baseline.execution,physical:parsed.physical??baseline.physical},null,2)+'\n'}
+            changed=true
+          }
+        } catch { /* Preserve a user-edited non-JSON manifest. */ }
+      }
+      if(!missing.length&&files===project.files) return project
+      if(missing.length) changed=true
+      return {...project,files}
     })
     if(changed) saveProjects(upgraded)
     return upgraded

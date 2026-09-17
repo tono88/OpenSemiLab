@@ -31,6 +31,7 @@
 ## M4 — Open EDA bridge
 
 - Isolated IIC-OSIC-TOOLS workers.
-- Xschem/ngspice and KLayout result adapters.
-- LibreLane/OpenROAD digital flow manifests.
+- Connected RTL, ngspice, and asynchronous LibreLane/OpenROAD execution.
+- Downloadable GDSII, DEF, LEF, netlist, timing, metrics, and log artifacts.
+- Next: Xschem round trips, layout visualization, and normalized KLayout result adapters.
 - PDK-aware course templates without redistributing PDK content.

@@ -6,7 +6,7 @@ OpenSemiLab presents one coherent workflow on top of open scientific engines. A 
 
 > Status: foundation release. The PN-junction vertical slice is usable end to end with a deterministic educational solver. A DEVSIM adapter boundary is included for the next integration step.
 
-The Design Studio executes **real RTL lint, simulation, synthesis, and batch SPICE simulation** inside an isolated IIC-OSIC-TOOLS worker. Projects persist in the browser as multi-file workspaces and can be exported or imported. RTL-to-GDSII, RF/EM, mixed-signal co-simulation, and physical-verification execution remain staged integrations and are visibly marked as such.
+The Design Studio executes **real RTL lint, simulation, synthesis, batch SPICE simulation, and asynchronous RTL-to-GDSII implementation** inside an isolated IIC-OSIC-TOOLS worker. Projects persist in the browser as multi-file workspaces and can be exported or imported. RF/EM and mixed-signal co-simulation remain staged integrations and are visibly marked as such.
 
 ## Why this project
 
@@ -30,6 +30,7 @@ Open-source EDA and multiphysics tools are powerful, but they expose different i
 - Map each stage to relevant IIC-OSIC-TOOLS engines while clearly distinguishing connected and pending adapters.
 - Edit SystemVerilog in the browser and run Verible/Verilator lint, Icarus Verilog simulation, and Yosys synthesis in IIC-OSIC-TOOLS.
 - Download the synthesized Yosys JSON netlist and inspect complete console output.
+- Run LibreLane Classic asynchronously for SKY130/GF180 and export bounded final GDSII, DEF, LEF, netlist, timing, metrics, and log artifacts.
 - Create and configure a 1D silicon PN junction.
 - Change doping, length, temperature, area, bias range, and mesh density.
 - Run a deterministic drift-diffusion-inspired educational approximation.
@@ -108,7 +109,7 @@ The built-in solver is intentionally labeled **educational**. It produces transp
 
 ## Roadmap
 
-1. Extend the connected worker from RTL synthesis to LibreLane/OpenROAD physical design.
+1. Add per-stage LibreLane progress, visual floorplan/layout inspection, and timing/area metric dashboards.
 2. Extend the connected ngspice runner with normalized waveform plots, sweeps, corners, and Xschem round trips.
 3. Execute a validated DEVSIM diode experiment and normalize its output.
 4. Add optional server-side project storage and Git synchronization while retaining local JSON portability.

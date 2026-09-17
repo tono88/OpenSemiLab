@@ -69,6 +69,38 @@ def run_eda_action(request: EdaRunRequest) -> dict:
         raise HTTPException(status_code=503, detail=f"IIC-OSIC worker unavailable: {error}") from error
 
 
+@app.post("/api/v1/eda/jobs", status_code=202)
+def start_eda_job(request: EdaRunRequest) -> dict:
+    if request.action != "physical":
+        raise HTTPException(status_code=422, detail="Only physical implementation uses asynchronous jobs")
+    try:
+        response = httpx.post(f"{eda_worker_url}/jobs", json=request.model_dump(), timeout=10)
+        if response.status_code >= 400:
+            detail = response.json().get("error", response.text)
+            raise HTTPException(status_code=response.status_code, detail=detail)
+        return response.json()
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, ValueError) as error:
+        raise HTTPException(status_code=503, detail=f"IIC-OSIC worker unavailable: {error}") from error
+
+
+@app.get("/api/v1/eda/jobs/{job_id}")
+def get_eda_job(job_id: str) -> dict:
+    if not job_id.isalnum() or len(job_id) > 32:
+        raise HTTPException(status_code=422, detail="Invalid job identifier")
+    try:
+        response = httpx.get(f"{eda_worker_url}/jobs/{job_id}", timeout=120)
+        if response.status_code >= 400:
+            detail = response.json().get("error", response.text)
+            raise HTTPException(status_code=response.status_code, detail=detail)
+        return response.json()
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, ValueError) as error:
+        raise HTTPException(status_code=503, detail=f"IIC-OSIC worker unavailable: {error}") from error
+
+
 @app.post("/api/v1/simulations/pn-junction", response_model=SimulationResult)
 def simulate_pn_junction(experiment: Experiment) -> SimulationResult:
     engine = ENGINES[experiment.engine.value]

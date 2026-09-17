@@ -74,3 +74,16 @@ def test_sensor_interface_connects_digital_and_spice_execution():
     assert "SPICE simulation" in result["notice"]
     ready_stages = {stage["id"] for stage in result["stages"] if stage["status"] == "ready"}
     assert {"requirements", "frontend", "digital"} <= ready_stages
+
+
+def test_physical_job_requires_bounded_options():
+    missing = client.post("/api/v1/eda/jobs", json={
+        "action": "physical", "top": "top", "sources": {"rtl/top.sv": "module top; endmodule"}
+    })
+    assert missing.status_code == 422
+
+    unsupported = client.post("/api/v1/eda/jobs", json={
+        "action": "physical", "top": "top", "sources": {"rtl/top.sv": "module top; endmodule"},
+        "physical": {"pdk": "ihp-sg13g2", "clock_port": "clk"}
+    })
+    assert unsupported.status_code == 422

@@ -1,13 +1,29 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+class PhysicalOptions(BaseModel):
+    pdk: Literal["sky130A", "gf180mcuD"]
+    clock_port: str = Field("clk", pattern=r"^[A-Za-z_][A-Za-z0-9_$]*$")
+    clock_period_ns: float = Field(10.0, ge=0.1, le=1000)
+    die_width_um: float = Field(120.0, ge=30, le=5000)
+    die_height_um: float = Field(120.0, ge=30, le=5000)
+    core_utilization_pct: float = Field(40.0, ge=5, le=80)
 
 
 class EdaRunRequest(BaseModel):
-    action: Literal["lint", "simulate", "synthesize", "spice"]
+    action: Literal["lint", "simulate", "synthesize", "spice", "physical"]
     top: str = Field("top", pattern=r"^[A-Za-z_][A-Za-z0-9_$]*$")
     entry: str | None = None
+    physical: PhysicalOptions | None = None
     sources: dict[str, str]
+
+    @model_validator(mode="after")
+    def physical_options_required(self):
+        if self.action == "physical" and self.physical is None:
+            raise ValueError("physical options are required for physical implementation")
+        return self
 
     @field_validator("sources")
     @classmethod

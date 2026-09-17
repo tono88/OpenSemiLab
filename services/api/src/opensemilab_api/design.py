@@ -67,8 +67,8 @@ def make_plan(project: DesignRequest) -> DesignPlan:
             stage("architecture", "Architecture & IP", "Define CPU, memories, buses, registers and peripherals.", ["FuseSoC", "Kactus2", "RISC-V toolchain", "rggen"], "IP-XACT and core manifest"),
             stage("rtl", "RTL & simulation", "Write, lint and verify behavior before synthesis.", ["Verible", "Verilator", "cocotb", "GTKWave", "pyUVM"], "verified RTL and coverage"),
             stage("formal", "Formal verification", "Prove key properties and equivalence.", ["Yosys SBY", "ABC", "EQY"], "property and equivalence reports"),
-            stage("physical", "RTL to GDSII", "Synthesize, floorplan, place, route and close timing.", ["Yosys", "LibreLane", "OpenROAD", "OpenSTA"], "GDSII, DEF and timing reports"),
-            stage("signoff", "Physical verification", "Check geometry, connectivity and extracted behavior.", ["KLayout", "Magic", "Netgen", "KLayout PEX"], "DRC/LVS/PEX reports"),
+            stage("physical", "RTL to GDSII", "Synthesize, floorplan, place, route and close timing.", ["Yosys", "LibreLane", "OpenROAD", "OpenSTA"], "GDSII, DEF and timing reports", "ready"),
+            stage("signoff", "Physical verification", "Check geometry, connectivity and extracted behavior.", ["KLayout", "Magic", "Netgen", "KLayout PEX"], "DRC/LVS/PEX reports", "ready"),
         ],
         "sensor_interface": [
             stage("requirements", "Sensor requirements", "Capture range, sensitivity, noise, bandwidth and power budgets.", ["OpenSemiLab"], "engineering specification", "ready"),
@@ -109,9 +109,9 @@ def make_plan(project: DesignRequest) -> DesignPlan:
         runner_available=rtl_runner_available or spice_runner_available,
         notice=(
             "RTL lint, simulation and synthesis plus SPICE simulation are executable in the isolated IIC-OSIC worker. "
-            "Physical implementation and mixed-signal co-simulation adapters remain in development."
+            "LibreLane physical implementation is available for SKY130/GF180. Mixed-signal co-simulation remains in development."
             if rtl_runner_available and spice_runner_available
-            else "RTL lint, simulation and synthesis are executable in the isolated IIC-OSIC worker. Physical implementation and signoff adapters remain in development."
+            else "RTL lint, simulation and synthesis are executable; LibreLane RTL-to-GDSII is available for SKY130/GF180 projects."
             if rtl_runner_available
             else "SPICE batch simulation is executable in the isolated IIC-OSIC worker. Layout and signoff adapters remain in development."
             if spice_runner_available
