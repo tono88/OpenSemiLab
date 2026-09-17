@@ -50,6 +50,22 @@ TOOL_BINARIES = {
     "openems": "openEMS",
 }
 
+PHYSICAL_SCLS = {
+    "sky130A": "sky130_fd_sc_hd",
+    "gf180mcuD": "gf180mcu_fd_sc_mcu7t5v0",
+}
+
+
+def physical_targets(pdk_root: str | None) -> dict[str, dict[str, Any]]:
+    root = Path(pdk_root) if pdk_root else None
+    return {
+        pdk: {
+            "scl": scl,
+            "available": bool(root and (root / pdk / "libs.ref" / scl).is_dir()),
+        }
+        for pdk, scl in PHYSICAL_SCLS.items()
+    }
+
 
 def capabilities() -> dict[str, Any]:
     tools = {}
@@ -57,12 +73,14 @@ def capabilities() -> dict[str, Any]:
         path = shutil.which(binary)
         tools[name] = {"available": path is not None, "binary": binary, "path": path}
 
+    pdk_root = os.getenv("PDK_ROOT") or os.getenv("PDKPATH")
+    targets = physical_targets(pdk_root)
     actions = {
         "lint": tools["verible_lint"]["available"] or tools["verilator"]["available"],
         "simulate": tools["iverilog"]["available"] and tools["vvp"]["available"],
         "synthesize": tools["yosys"]["available"],
         "spice": tools["ngspice"]["available"],
-        "physical": tools["librelane"]["available"] and bool(os.getenv("PDK_ROOT") or os.getenv("PDKPATH")),
+        "physical": tools["librelane"]["available"] and any(target["available"] for target in targets.values()),
     }
     return {
         "worker": "iic-osic-tools",
@@ -71,9 +89,10 @@ def capabilities() -> dict[str, Any]:
         "all_actions_ready": all(actions.values()),
         "actions": actions,
         "tools": tools,
+        "physical_targets": targets,
         "environment": {
             "tools_root": os.getenv("TOOLS"),
-            "pdk_root": os.getenv("PDK_ROOT") or os.getenv("PDKPATH"),
+            "pdk_root": pdk_root,
         },
     }
 
@@ -102,10 +121,22 @@ def validate_sources(raw: Any, action: str) -> dict[str, str]:
     return clean
 
 
-def run_command(command: list[str], cwd: Path, timeout_seconds: int = TIMEOUT_SECONDS) -> dict[str, Any]:
+def run_command(
+    command: list[str],
+    cwd: Path,
+    timeout_seconds: int = TIMEOUT_SECONDS,
+    env_overrides: dict[str, str] | None = None,
+) -> dict[str, Any]:
     started = time.monotonic()
     try:
-        process = subprocess.run(command, cwd=cwd, text=True, capture_output=True, timeout=timeout_seconds, env={**os.environ, "HOME": str(cwd)})
+        process = subprocess.run(
+            command,
+            cwd=cwd,
+            text=True,
+            capture_output=True,
+            timeout=timeout_seconds,
+            env={**os.environ, "HOME": str(cwd), **(env_overrides or {})},
+        )
         output = (process.stdout + ("\n" if process.stdout and process.stderr else "") + process.stderr)[-MAX_OUTPUT:]
         return {"exit_code": process.returncode, "output": output, "duration_ms": round((time.monotonic() - started) * 1000), "timed_out": False}
     except subprocess.TimeoutExpired as error:
@@ -175,8 +206,18 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
             if not isinstance(options, dict):
                 raise ValueError("physical options are required")
             pdk = options.get("pdk")
-            if pdk not in {"sky130A", "gf180mcuD"}:
+            if pdk not in PHYSICAL_SCLS:
                 raise ValueError("physical implementation currently supports sky130A and gf180mcuD")
+            scl = PHYSICAL_SCLS[pdk]
+            scl_root = Path(pdk_root) / pdk / "libs.ref" / scl
+            if not scl_root.is_dir():
+                libraries_root = scl_root.parent
+                available = sorted(path.name for path in libraries_root.iterdir() if path.is_dir()) if libraries_root.is_dir() else []
+                installed = ", ".join(available) if available else "none"
+                raise RuntimeError(
+                    f"The standard-cell library {scl} required by {pdk} is not installed under "
+                    f"{libraries_root}. Installed libraries: {installed}"
+                )
             clock_port = options.get("clock_port", "clk")
             if not isinstance(clock_port, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_$]*", clock_port):
                 raise ValueError("invalid clock port")
@@ -189,6 +230,7 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
             config = {
                 "meta": {"version": 2, "flow": "Classic"},
                 "PDK": pdk,
+                "STD_CELL_LIBRARY": scl,
                 "DESIGN_NAME": top,
                 "VERILOG_FILES": [f"dir::{name}" for name in source_names],
                 "CLOCK_PORT": clock_port,
@@ -198,11 +240,32 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
                 "FP_CORE_UTIL": utilization,
             }
             (job_dir / "physical-config.json").write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-            command = [binary, "--pdk-root", pdk_root, "--save-views-to", "final", "physical-config.json"]
-            result = run_command(command, job_dir, PHYSICAL_TIMEOUT_SECONDS)
+            command = [
+                binary,
+                "--pdk-root", pdk_root,
+                "--pdk", pdk,
+                "--scl", scl,
+                "--save-views-to", "final",
+                "physical-config.json",
+            ]
+            result = run_command(
+                command,
+                job_dir,
+                PHYSICAL_TIMEOUT_SECONDS,
+                env_overrides={"PDK": pdk, "STD_CELL_LIBRARY": scl},
+            )
             artifacts = physical_artifacts(job_dir)
             artifacts.insert(0, {"name": "physical-config.json", "media_type": "application/json", "encoding": "utf-8", "content": json.dumps(config, indent=2) + "\n", "size_bytes": len(json.dumps(config))})
-            return {"job_id": job_id, "action": action, "engine": "LibreLane/OpenROAD", "success": result["exit_code"] == 0, **result, "artifacts": artifacts}
+            return {
+                "job_id": job_id,
+                "action": action,
+                "engine": "LibreLane/OpenROAD",
+                "pdk": pdk,
+                "scl": scl,
+                "success": result["exit_code"] == 0,
+                **result,
+                "artifacts": artifacts,
+            }
         if action == "spice":
             if not shutil.which(TOOL_BINARIES["ngspice"]):
                 raise RuntimeError("ngspice is unavailable after IIC-OSIC environment initialization")
