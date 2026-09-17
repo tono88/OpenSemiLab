@@ -45,7 +45,8 @@ endmodule
 
 interface RunResult { job_id: string; action: string; engine: string; success: boolean; exit_code: number; output: string; duration_ms: number; artifacts: {name:string;media_type:string;content:string}[] }
 
-export default function DigitalWorkbench() {
+export default function DigitalWorkbench({ locale }: { locale: 'es' | 'en' }) {
+  const es=locale==='es'
   const [rtl, setRtl] = useState(DEFAULT_RTL)
   const [testbench, setTestbench] = useState(DEFAULT_TB)
   const [worker, setWorker] = useState<'checking'|'online'|'degraded'|'offline'>('checking')
@@ -63,7 +64,7 @@ export default function DigitalWorkbench() {
 
   async function run(action:'lint'|'simulate'|'synthesize') {
     setRunning(action); setError(''); setResult(null)
-    const body={action,top:action==='simulate'?'tb':'top',sources:action==='simulate'?{'design.sv':rtl,'tb.sv':testbench}:{'design.sv':rtl}}
+    const body={action,top:action==='simulate'?'tb':'top',sources:action==='simulate'?{'top.sv':rtl,'tb.sv':testbench}:{'top.sv':rtl}}
     try { const response=await fetch('/api/v1/eda/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); const data=await response.json(); if(!response.ok) throw new Error(data.detail??'EDA execution failed'); setResult(data) }
     catch(reason){setError(reason instanceof Error?reason.message:'EDA execution failed')}
     finally{setRunning('')}
@@ -77,19 +78,19 @@ export default function DigitalWorkbench() {
   const simulationAvailable=Boolean(tools.iverilog?.available&&tools.vvp?.available)
   const synthesisAvailable=Boolean(tools.yosys?.available)
   const workerMessage=worker==='online'
-    ? 'IIC-OSIC worker online · RTL toolchain ready'
+    ? (es?'Worker IIC-OSIC conectado · herramientas RTL listas':'IIC-OSIC worker online · RTL toolchain ready')
     : worker==='degraded'
-      ? 'Worker connected · required RTL tools are missing from PATH'
+      ? (es?'Worker conectado · faltan herramientas RTL requeridas en PATH':'Worker connected · required RTL tools are missing from PATH')
       : worker==='checking'
-        ? 'Checking IIC-OSIC worker…'
-        : 'Worker offline — rebuild the Docker stack to enable execution'
+        ? (es?'Comprobando worker IIC-OSIC…':'Checking IIC-OSIC worker…')
+        : (es?'Worker desconectado — reconstruya Docker para habilitar la ejecución':'Worker offline — rebuild the Docker stack to enable execution')
 
   return <section className="workbench">
-    <div className="section-heading"><span>04</span><div><h2>RTL workbench</h2><p>Edit real SystemVerilog and execute command-line tools inside IIC-OSIC-TOOLS.</p></div></div>
-    <div className={`worker-state ${worker}`}><i/>{workerMessage}<button onClick={refresh}>Check again</button></div>
-    <div className="editor-grid"><label><span>design.sv · synthesized design</span><textarea value={rtl} onChange={e=>setRtl(e.target.value)} spellCheck={false}/></label><label><span>tb.sv · simulation testbench</span><textarea value={testbench} onChange={e=>setTestbench(e.target.value)} spellCheck={false}/></label></div>
-    <div className="action-bar"><button disabled={!lintAvailable||!!running} onClick={()=>run('lint')}><span>01</span>{running==='lint'?'Running…':'Lint RTL'}<small>{lintAvailable?(tools.verible_lint?.available?'Verible':'Verilator'):'Unavailable'}</small></button><button disabled={!simulationAvailable||!!running} onClick={()=>run('simulate')}><span>02</span>{running==='simulate'?'Running…':'Simulate'}<small>{simulationAvailable?'Icarus Verilog':'Unavailable'}</small></button><button disabled={!synthesisAvailable||!!running} onClick={()=>run('synthesize')}><span>03</span>{running==='synthesize'?'Running…':'Synthesize'}<small>{synthesisAvailable?'Yosys':'Unavailable'}</small></button></div>
+    <div className="section-heading"><span>04</span><div><h2>{es?'Banco de trabajo RTL':'RTL workbench'}</h2><p>{es?'Edite SystemVerilog real y ejecute herramientas de línea de comandos dentro de IIC-OSIC-TOOLS.':'Edit real SystemVerilog and execute command-line tools inside IIC-OSIC-TOOLS.'}</p></div></div>
+    <div className={`worker-state ${worker}`}><i/>{workerMessage}<button onClick={refresh}>{es?'Comprobar':'Check again'}</button></div>
+    <div className="editor-grid"><label><span>top.sv · {es?'diseño para síntesis':'synthesized design'}</span><textarea value={rtl} onChange={e=>setRtl(e.target.value)} spellCheck={false}/></label><label><span>tb.sv · {es?'banco de pruebas':'simulation testbench'}</span><textarea value={testbench} onChange={e=>setTestbench(e.target.value)} spellCheck={false}/></label></div>
+    <div className="action-bar"><button disabled={!lintAvailable||!!running} onClick={()=>run('lint')}><span>01</span>{running==='lint'?(es?'Ejecutando…':'Running…'):(es?'Analizar RTL':'Lint RTL')}<small>{lintAvailable?(tools.verible_lint?.available?'Verible':'Verilator'):(es?'No disponible':'Unavailable')}</small></button><button disabled={!simulationAvailable||!!running} onClick={()=>run('simulate')}><span>02</span>{running==='simulate'?(es?'Ejecutando…':'Running…'):(es?'Simular':'Simulate')}<small>{simulationAvailable?'Icarus Verilog':(es?'No disponible':'Unavailable')}</small></button><button disabled={!synthesisAvailable||!!running} onClick={()=>run('synthesize')}><span>03</span>{running==='synthesize'?(es?'Ejecutando…':'Running…'):(es?'Sintetizar':'Synthesize')}<small>{synthesisAvailable?'Yosys':(es?'No disponible':'Unavailable')}</small></button></div>
     {error&&<p className="error">{error}</p>}
-    {result&&<div className="console"><div><span>{result.engine} · job {result.job_id} · {result.duration_ms} ms</span><b className={result.success?'success':'failed'}>{result.success?'PASSED':'FAILED'} · EXIT {result.exit_code}</b></div><pre>{result.output||'Command completed without console output.'}</pre>{result.artifacts.map(artifact=><button key={artifact.name} onClick={()=>download(artifact)}>Download {artifact.name} ↓</button>)}</div>}
+    {result&&<div className="console"><div><span>{result.engine} · job {result.job_id} · {result.duration_ms} ms</span><b className={result.success?'success':'failed'}>{result.success?(es?'CORRECTO':'PASSED'):(es?'FALLÓ':'FAILED')} · EXIT {result.exit_code}</b></div><pre>{result.output||(es?'El comando terminó sin salida en consola.':'Command completed without console output.')}</pre>{result.artifacts.map(artifact=><button key={artifact.name} onClick={()=>download(artifact)}>{es?'Descargar':'Download'} {artifact.name} ↓</button>)}</div>}
   </section>
 }

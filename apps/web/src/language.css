@@ -1,0 +1,29 @@
+.header-tools {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.locale-switch {
+  display: flex;
+  border: 1px solid #ffffff1c;
+}
+
+.locale-switch button {
+  border: 0;
+  background: transparent;
+  color: #78978b;
+  padding: 6px 8px;
+  cursor: pointer;
+  font: 10px DM Mono;
+}
+
+.locale-switch button.active {
+  color: #04100c;
+  background: #45e6a6;
+}
+
+@media(max-width:760px) {
+  .header-tools .engine { display: none; }
+  .header-tools { margin-left: auto; }
+}
