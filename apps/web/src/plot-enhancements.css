@@ -1,0 +1,12 @@
+.plot-interactive svg { touch-action: none; }
+.plot .tick-label { fill: #58736a; font-size: 8px; }
+.plot .axis-title { fill: #78978b; font-size: 9px; }
+.plot .zero-line { stroke: #e8bd6966; stroke-width: 1; stroke-dasharray: 4 4; }
+.plot-cursor > line { stroke: #dff8ee55; stroke-width: 1; stroke-dasharray: 3 3; }
+.plot-cursor > g rect { fill: #07130f; stroke: #45e6a680; }
+.plot-cursor > g text { fill: #b9ecd9; font: 9px DM Mono; }
+
+@media (max-width: 560px) {
+  .plot { min-height: 220px; }
+  .plot .tick-label { font-size: 7px; }
+}

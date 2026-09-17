@@ -72,7 +72,7 @@ function App() {
           <div className="panel-title"><div><span>02</span><h2>{es?'Interprete el dispositivo':'Read the device'}</h2></div><small className={result?.converged ? 'ok' : ''}>{result?.converged ? (es?'● RESUELTO':'● SOLVED') : (es?'○ LISTO':'○ READY')}</small></div>
           <div className="metrics">{result?.metrics.map(metric => <div key={metric.label}><span>{metric.label}</span><b>{metric.value.toExponential(3)}</b><small>{metric.unit}</small></div>)}</div>
           <div className="plot-tabs">{[['potential',es?'Potencial':'Potential'],['electric_field',es?'Campo E':'E-field'],['charge_density',es?'Carga':'Charge'],['iv',es?'Curva I–V':'I–V curve']].map(([id,label]) => <button className={activePlot===id?'active':''} onClick={()=>setActivePlot(id)} key={id}>{label}</button>)}</div>
-          <Plot series={selected}/>
+          <Plot series={selected} locale={locale}/>
           {depth >= 1 && result && <div className="explain"><span>{es?'POR QUÉ CAMBIA':'WHY IT MOVES'}</span><p>{result.explanations[activePlot === 'iv' ? 1 : 0]}</p></div>}
         </section>
       </section>

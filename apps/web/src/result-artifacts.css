@@ -1,0 +1,128 @@
+/* Result artifacts use a content-aware grid; long PDK filenames never widen the page. */
+.console {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.console > .console-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 11px 14px;
+  border-bottom: 1px solid #ffffff18;
+  color: #78978b;
+  font: 9px DM Mono;
+}
+
+.console-output {
+  border-bottom: 1px solid #ffffff18;
+}
+
+.console-output summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 11px 14px;
+  color: #78978b;
+  font: 9px DM Mono;
+  cursor: pointer;
+  list-style: none;
+}
+
+.console-output summary::-webkit-details-marker { display: none; }
+.console-output summary::before { content: '+'; color: #45e6a6; margin-right: 8px; }
+.console-output[open] summary::before { content: '−'; }
+.console-output summary span { margin-left: auto; color: #527064; }
+.console-output pre { border-top: 1px solid #ffffff12; }
+
+.console > .artifact-browser {
+  display: block;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  font: inherit;
+}
+
+.artifact-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px 18px 12px;
+}
+
+.artifact-heading span,
+.artifact-heading b,
+.artifact-heading small { display: block; }
+.artifact-heading span { color: #45e6a6; font: 8px DM Mono; letter-spacing: .12em; }
+.artifact-heading b { margin-top: 6px; color: #dff8ee; font: 11px DM Mono; }
+.artifact-heading small { color: #527064; font: 8px DM Mono; }
+
+.artifact-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 18px 14px;
+}
+
+.artifact-filters button {
+  border: 1px solid #ffffff18;
+  background: transparent;
+  color: #78978b;
+  padding: 7px 9px;
+  font: 8px DM Mono;
+  cursor: pointer;
+}
+
+.artifact-filters button b { color: #527064; margin-left: 5px; }
+.artifact-filters button.active { border-color: #45e6a670; background: #123126; color: #dff8ee; }
+.artifact-filters button.active b { color: #45e6a6; }
+
+.artifact-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 8px;
+  padding: 0 18px 18px;
+  min-width: 0;
+}
+
+.artifact-card {
+  display: flex;
+  min-width: 0;
+  min-height: 132px;
+  flex-direction: column;
+  text-align: left;
+  border: 1px solid #ffffff18;
+  border-top: 2px solid #45675a;
+  background: #0a1813;
+  color: #9ed8c2;
+  padding: 13px;
+  cursor: pointer;
+  transition: border-color .16s ease, background .16s ease, transform .16s ease;
+}
+
+.artifact-card:hover { border-color: #45e6a680; background: #0e241b; transform: translateY(-1px); }
+.artifact-card.kind-layout { border-top-color: #45e6a6; }
+.artifact-card.kind-timing { border-top-color: #e8bd69; }
+.artifact-card.kind-netlist { border-top-color: #73b9e6; }
+.artifact-card.kind-report { border-top-color: #b68ae6; }
+.artifact-card.kind-configuration { border-top-color: #78978b; }
+.artifact-card-top,
+.artifact-card-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.artifact-card i,
+.artifact-card em { font-style: normal; }
+.artifact-card-top i { color: #66877a; font: 7px DM Mono; text-transform: uppercase; letter-spacing: .1em; }
+.artifact-card-top em { border: 1px solid #ffffff18; color: #78978b; padding: 3px 5px; font: 7px DM Mono; }
+.artifact-card strong { margin: 14px 0 6px; color: #c5eddd; font: 10px/1.35 DM Mono; overflow-wrap: anywhere; }
+.artifact-card > small { color: #527064; font: 8px/1.4 DM Mono; overflow-wrap: anywhere; }
+.artifact-card-meta { margin-top: auto; padding-top: 12px; color: #527064; font: 8px DM Mono; }
+.artifact-card-meta b { color: #45e6a6; font-size: 13px; }
+
+@media (max-width: 620px) {
+  .console > .console-header,
+  .artifact-heading { align-items: flex-start; flex-direction: column; }
+  .artifact-heading { gap: 8px; }
+  .artifact-grid { grid-template-columns: 1fr; }
+  .artifact-filters { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 12px; }
+  .artifact-filters button { white-space: nowrap; }
+}
