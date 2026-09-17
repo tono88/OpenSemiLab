@@ -1,0 +1,31 @@
+.saved-project {
+  position: relative;
+  padding: 0;
+  cursor: default;
+}
+
+.saved-open {
+  display: block;
+  width: 100%;
+  min-height: 92px;
+  padding: 16px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.saved-delete {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  border: 0;
+  background: transparent;
+  color: #66877a;
+  font: 17px DM Mono;
+  cursor: pointer;
+}
+
+.saved-delete:hover { color: #ff7676; }
+.empty-projects { color: #66877a; font: 10px DM Mono; }

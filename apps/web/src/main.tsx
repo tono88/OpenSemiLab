@@ -6,5 +6,7 @@ import './design.css'
 import './workbench.css'
 import './worker-health.css'
 import './language.css'
+import './project-workspace.css'
+import './library-cards.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>)

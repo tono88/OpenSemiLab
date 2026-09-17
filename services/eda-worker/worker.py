@@ -14,7 +14,7 @@ import tempfile
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 HOST = "0.0.0.0"
@@ -23,7 +23,7 @@ WORK_ROOT = Path(os.getenv("OPENSEMILAB_WORK_ROOT", "/tmp/opensemilab-jobs"))
 MAX_BODY = 512_000
 MAX_OUTPUT = 200_000
 TIMEOUT_SECONDS = int(os.getenv("OPENSEMILAB_JOB_TIMEOUT", "90"))
-SAFE_FILENAME = re.compile(r"^[A-Za-z0-9_.-]+$")
+SAFE_PATH_COMPONENT = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 TOOL_BINARIES = {
     "verilator": "verilator",
@@ -74,7 +74,11 @@ def validate_sources(raw: Any) -> dict[str, str]:
     clean: dict[str, str] = {}
     total = 0
     for filename, content in raw.items():
-        if not isinstance(filename, str) or not SAFE_FILENAME.fullmatch(filename) or filename.startswith("."):
+        path = PurePosixPath(filename) if isinstance(filename, str) else None
+        if (
+            path is None or path.is_absolute() or not path.parts
+            or any(part in {"", ".", ".."} or not SAFE_PATH_COMPONENT.fullmatch(part) for part in path.parts)
+        ):
             raise ValueError(f"unsafe source filename: {filename!r}")
         if Path(filename).suffix not in {".v", ".sv", ".vh", ".svh"}:
             raise ValueError(f"unsupported source type: {filename}")
@@ -112,7 +116,9 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
     job_dir = Path(tempfile.mkdtemp(prefix=f"job-{job_id}-", dir=WORK_ROOT))
     try:
         for filename, content in sources.items():
-            (job_dir / filename).write_text(content, encoding="utf-8")
+            destination = job_dir / filename
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(content, encoding="utf-8")
         source_names = sorted(sources)
         if action == "lint":
             binary = TOOL_BINARIES["verible_lint"]
