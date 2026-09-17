@@ -6,7 +6,7 @@ OpenSemiLab presents one coherent workflow on top of open scientific engines. A 
 
 > Status: foundation release. The PN-junction vertical slice is usable end to end with a deterministic educational solver. A DEVSIM adapter boundary is included for the next integration step.
 
-The digital Design Studio now executes **real lint, simulation, and synthesis** inside an isolated IIC-OSIC-TOOLS worker. RTL-to-GDSII, analog, RF, and physical-verification execution remain staged integrations and are visibly marked as such.
+The Design Studio executes **real RTL lint, simulation, synthesis, and batch SPICE simulation** inside an isolated IIC-OSIC-TOOLS worker. Projects persist in the browser as multi-file workspaces and can be exported or imported. RTL-to-GDSII, RF/EM, mixed-signal co-simulation, and physical-verification execution remain staged integrations and are visibly marked as such.
 
 ## Why this project
 
@@ -109,9 +109,9 @@ The built-in solver is intentionally labeled **educational**. It produces transp
 ## Roadmap
 
 1. Extend the connected worker from RTL synthesis to LibreLane/OpenROAD physical design.
-2. Connect Xschem/ngspice project manifests and normalized waveform results.
+2. Extend the connected ngspice runner with normalized waveform plots, sweeps, corners, and Xschem round trips.
 3. Execute a validated DEVSIM diode experiment and normalize its output.
-4. Add authentication-free local projects and JSON export/import.
+4. Add optional server-side project storage and Git synchronization while retaining local JSON portability.
 5. Add MOS capacitor and MOSFET experiment templates.
 6. Integrate Gmsh, VTK, and electro-thermal adapters.
 

@@ -31,7 +31,7 @@ Adapters implement a small interface: capability metadata and `run(experiment)`.
 
 ### IIC-OSIC execution worker
 
-The EDA worker derives from the IIC-OSIC-TOOLS image and exposes only named workflows; it does not expose a browser-accessible shell or Docker socket. The first connected workflows are RTL lint, Icarus Verilog simulation, and Yosys synthesis. Jobs have source-size, filename, process, CPU, memory, output, and timeout limits. Temporary workspaces are destroyed after every job.
+The EDA worker derives from the IIC-OSIC-TOOLS image and exposes only named workflows; it does not expose a browser-accessible shell or Docker socket. Connected workflows include RTL lint, Icarus Verilog simulation, Yosys synthesis, and ngspice batch simulation. Jobs have source-size, filename, process, CPU, memory, output, and timeout limits. Temporary workspaces are destroyed after every job.
 
 ### Future worker boundary
 

@@ -60,7 +60,8 @@ def stage(id: str, title: str, purpose: str, tools: list[str], output: str, stat
 
 
 def make_plan(project: DesignRequest) -> DesignPlan:
-    rtl_runner_available = project.kind in {"microcontroller", "fpga_prototype"}
+    rtl_runner_available = project.kind in {"microcontroller", "fpga_prototype", "sensor_interface", "standard_cell"}
+    spice_runner_available = project.kind in {"sensor_interface", "analog_block", "standard_cell"}
     flows: dict[str, list[DesignStage]] = {
         "microcontroller": [
             stage("architecture", "Architecture & IP", "Define CPU, memories, buses, registers and peripherals.", ["FuseSoC", "Kactus2", "RISC-V toolchain", "rggen"], "IP-XACT and core manifest"),
@@ -71,14 +72,14 @@ def make_plan(project: DesignRequest) -> DesignPlan:
         ],
         "sensor_interface": [
             stage("requirements", "Sensor requirements", "Capture range, sensitivity, noise, bandwidth and power budgets.", ["OpenSemiLab"], "engineering specification", "ready"),
-            stage("frontend", "Analog front-end", "Design bias, amplification, filtering and conversion circuits.", ["Xschem", "ngspice", "Xyce", "pygmid"], "corner-tested schematic"),
+            stage("frontend", "Analog front-end", "Design bias, amplification, filtering and conversion circuits.", ["Xschem", "ngspice", "Xyce", "pygmid"], "corner-tested schematic", "ready"),
             stage("mixed", "Mixed-signal verification", "Co-simulate the analog front-end and digital controller.", ["spicebind", "ngspice", "Verilator", "cocotb"], "mixed-signal regression"),
             stage("layout", "Layout & extraction", "Create geometry and verify post-layout behavior.", ["KLayout", "Magic", "Netgen", "KLayout PEX"], "verified GDSII"),
-            stage("digital", "Digital control", "Implement calibration, communications and register logic.", ["rggen", "Yosys", "LibreLane", "OpenROAD"], "digital macro"),
+            stage("digital", "Digital control", "Implement calibration, communications and register logic.", ["Verible", "Icarus Verilog", "Yosys", "LibreLane", "OpenROAD"], "digital macro", "ready"),
         ],
         "analog_block": [
             stage("sizing", "Topology & sizing", "Select topology and calculate initial transistor dimensions.", ["pygmid", "Xschem", "hdl21"], "sized schematic", "ready"),
-            stage("simulation", "SPICE verification", "Run operating point, AC, transient, noise, corners and Monte Carlo.", ["ngspice", "Xyce", "CACE", "chipify", "PyOPUS"], "performance and yield report"),
+            stage("simulation", "SPICE verification", "Run operating point, AC, transient, noise, corners and Monte Carlo.", ["ngspice", "Xyce", "CACE", "chipify", "PyOPUS"], "performance and yield report", "ready"),
             stage("layout", "Custom layout", "Draw matched geometry with PDK-aware rules.", ["KLayout", "Magic"], "GDSII"),
             stage("verification", "DRC / LVS / PEX", "Verify rules, connectivity and extracted performance.", ["KLayout", "gdscheck", "Netgen", "KLayout PEX"], "signoff candidate"),
         ],
@@ -89,7 +90,7 @@ def make_plan(project: DesignRequest) -> DesignPlan:
             stage("cosim", "Circuit / EM co-simulation", "Bring extracted passives back into circuit verification.", ["snp2le", "ngspice", "Qucs-S"], "co-simulation report"),
         ],
         "standard_cell": [
-            stage("function", "Cell function", "Define schematic, truth table and electrical constraints.", ["Xschem", "ngspice"], "validated netlist", "ready"),
+            stage("function", "Cell function", "Define schematic, truth table and electrical constraints.", ["Verible", "Icarus Verilog", "Yosys", "ngspice"], "validated netlist", "ready"),
             stage("layout", "Cell layout", "Create a track-compatible reusable physical cell.", ["KLayout", "Magic"], "GDS and LEF"),
             stage("verify", "Physical verification", "Run DRC, LVS, ERC and extraction.", ["gdscheck", "Netgen", "CVC", "KLayout PEX"], "verification reports"),
             stage("characterize", "Characterization", "Generate timing, power and noise models.", ["CharLib", "lctime", "CACE"], "Liberty models"),
@@ -105,11 +106,15 @@ def make_plan(project: DesignRequest) -> DesignPlan:
         project=project,
         stages=flows[project.kind],
         runner="IIC-OSIC-TOOLS isolated worker",
-        runner_available=rtl_runner_available,
+        runner_available=rtl_runner_available or spice_runner_available,
         notice=(
-            "RTL lint, simulation and synthesis are executable in the isolated IIC-OSIC worker. "
-            "Physical implementation and signoff adapters remain in development."
+            "RTL lint, simulation and synthesis plus SPICE simulation are executable in the isolated IIC-OSIC worker. "
+            "Physical implementation and mixed-signal co-simulation adapters remain in development."
+            if rtl_runner_available and spice_runner_available
+            else "RTL lint, simulation and synthesis are executable in the isolated IIC-OSIC worker. Physical implementation and signoff adapters remain in development."
             if rtl_runner_available
+            else "SPICE batch simulation is executable in the isolated IIC-OSIC worker. Layout and signoff adapters remain in development."
+            if spice_runner_available
             else "This engineering flow is planned; its isolated execution adapter remains in development."
         ),
     )

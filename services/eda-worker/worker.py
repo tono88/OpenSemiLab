@@ -54,6 +54,7 @@ def capabilities() -> dict[str, Any]:
         "lint": tools["verible_lint"]["available"] or tools["verilator"]["available"],
         "simulate": tools["iverilog"]["available"] and tools["vvp"]["available"],
         "synthesize": tools["yosys"]["available"],
+        "spice": tools["ngspice"]["available"],
     }
     return {
         "worker": "iic-osic-tools",
@@ -68,7 +69,7 @@ def capabilities() -> dict[str, Any]:
     }
 
 
-def validate_sources(raw: Any) -> dict[str, str]:
+def validate_sources(raw: Any, action: str) -> dict[str, str]:
     if not isinstance(raw, dict) or not raw:
         raise ValueError("sources must be a non-empty object")
     clean: dict[str, str] = {}
@@ -80,7 +81,8 @@ def validate_sources(raw: Any) -> dict[str, str]:
             or any(part in {"", ".", ".."} or not SAFE_PATH_COMPONENT.fullmatch(part) for part in path.parts)
         ):
             raise ValueError(f"unsafe source filename: {filename!r}")
-        if Path(filename).suffix not in {".v", ".sv", ".vh", ".svh"}:
+        allowed_suffixes = {".spice", ".cir", ".ckt", ".lib"} if action == "spice" else {".v", ".sv", ".vh", ".svh"}
+        if Path(filename).suffix.lower() not in allowed_suffixes:
             raise ValueError(f"unsupported source type: {filename}")
         if not isinstance(content, str):
             raise ValueError(f"source must be text: {filename}")
@@ -104,9 +106,9 @@ def run_command(command: list[str], cwd: Path) -> dict[str, Any]:
 
 def execute(payload: dict[str, Any]) -> dict[str, Any]:
     action = payload.get("action")
-    if action not in {"lint", "simulate", "synthesize"}:
-        raise ValueError("action must be lint, simulate, or synthesize")
-    sources = validate_sources(payload.get("sources"))
+    if action not in {"lint", "simulate", "synthesize", "spice"}:
+        raise ValueError("action must be lint, simulate, synthesize, or spice")
+    sources = validate_sources(payload.get("sources"), action)
     top = payload.get("top", "top")
     if not isinstance(top, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_$]*", top):
         raise ValueError("invalid top module")
@@ -120,6 +122,20 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_text(content, encoding="utf-8")
         source_names = sorted(sources)
+        if action == "spice":
+            if not shutil.which(TOOL_BINARIES["ngspice"]):
+                raise RuntimeError("ngspice is unavailable after IIC-OSIC environment initialization")
+            entry = payload.get("entry")
+            if not isinstance(entry, str) or entry not in sources:
+                raise ValueError("entry must identify one of the supplied SPICE files")
+            result = run_command([TOOL_BINARIES["ngspice"], "-b", "-o", "spice.log", entry], job_dir)
+            log_path = job_dir / "spice.log"
+            log = log_path.read_text(encoding="utf-8", errors="replace") if log_path.exists() else result["output"]
+            result["output"] = log[-MAX_OUTPUT:]
+            artifacts = []
+            if log_path.exists():
+                artifacts.append({"name": "spice.log", "media_type": "text/plain", "content": log[-MAX_OUTPUT:]})
+            return {"job_id": job_id, "action": action, "engine": "ngspice", "success": result["exit_code"] == 0, **result, "artifacts": artifacts}
         if action == "lint":
             binary = TOOL_BINARIES["verible_lint"]
             if shutil.which(binary):

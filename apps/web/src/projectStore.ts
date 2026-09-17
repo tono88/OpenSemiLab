@@ -31,7 +31,15 @@ OpenSemiLab project
 Edit the files in this workspace, run the available checks, and export the project JSON for version control or transfer.
 `
 
-const manifest = (name:string, kind:string, pdk:string) => JSON.stringify({schema:'opensemilab.project/v1',name,kind,pdk,top:'top'},null,2)+'\n'
+const executionByKind:Record<string,Record<string,string>>={
+  microcontroller:{rtl_top:'top',testbench_top:'tb_top'},
+  fpga_prototype:{rtl_top:'top',testbench_top:'tb_top'},
+  sensor_interface:{rtl_top:'sensor_ctrl',testbench_top:'tb_sensor_ctrl',spice_entry:'analog/afe.spice'},
+  analog_block:{spice_entry:'simulation/testbench.spice'},
+  standard_cell:{rtl_top:'inverter',testbench_top:'tb_inverter',spice_entry:'simulation/tb_inverter.spice'},
+}
+
+const manifest = (name:string, kind:string, pdk:string) => JSON.stringify({schema:'opensemilab.project/v2',name,kind,pdk,execution:executionByKind[kind]??{}},null,2)+'\n'
 
 export function starterFiles(kind:string,name:string,pdk:string):ProjectFile[] {
   const common:ProjectFile[]=[
@@ -125,6 +133,25 @@ endmodule
   end
 endmodule
 `},
+      {path:'verification/tb_sensor_ctrl.sv',role:'testbench',content:`\`timescale 1ns/1ps
+module tb_sensor_ctrl;
+  logic clk=0, rst_n=0, sample_ready=0, sample_ack;
+  sensor_ctrl dut(.*);
+  always #5 clk=~clk;
+  initial begin
+    $display("OpenSemiLab sensor controller simulation started");
+    #12 rst_n=1;
+    @(negedge clk) sample_ready=1;
+    @(posedge clk); #1;
+    if (sample_ack !== 1'b1) $fatal(1,"sample_ack did not follow sample_ready");
+    @(negedge clk) sample_ready=0;
+    @(posedge clk); #1;
+    if (sample_ack !== 1'b0) $fatal(1,"sample_ack did not clear");
+    $display("PASS sensor_ctrl handshake");
+    $finish;
+  end
+endmodule
+`},
       {path:'verification/plan.md',role:'documentation',content:'# Verification plan\n\n- DC operating point\n- Noise and bandwidth\n- ADC range\n- Digital calibration\n- Process, voltage and temperature corners\n'},
       {path:'layout/README.md',role:'layout',content:'# Layout\n\nFloorplan the analog front-end, ADC interface and digital control macro.\n'},
     ],
@@ -145,6 +172,28 @@ endmodule
     standard_cell:[
       {path:'rtl/inverter.sv',role:'source',content:'module inverter(input logic A, output logic Y);\n  assign Y = ~A;\nendmodule\n'},
       {path:'schematic/inverter.spice',role:'simulation',content:'* CMOS inverter\n.subckt inverter A Y VDD VSS\n* MP Y A VDD VDD pmos\n* MN Y A VSS VSS nmos\n.ends inverter\n'},
+      {path:'verification/tb_inverter.sv',role:'testbench',content:`\`timescale 1ns/1ps
+module tb_inverter;
+  logic A, Y;
+  inverter dut(.*);
+  initial begin
+    A=0; #1; if(Y!==1) $fatal(1,"Y must be 1 when A is 0");
+    A=1; #1; if(Y!==0) $fatal(1,"Y must be 0 when A is 1");
+    $display("PASS inverter truth table");
+    $finish;
+  end
+endmodule
+`},
+      {path:'simulation/tb_inverter.spice',role:'testbench',content:`* Technology-independent inverter transfer example
+VDD vdd 0 1.8
+VIN a 0 0
+RPU vdd y 10k
+S1 y 0 a 0 SWMOD
+.model SWMOD SW(Ron=10 Roff=1G Vt=0.9 Vh=0.05)
+.dc VIN 0 1.8 0.1
+.print dc v(a) v(y)
+.end
+`},
       {path:'characterization/config.yaml',role:'configuration',content:'cell: inverter\nslew_points: [0.01, 0.05, 0.1]\nload_points_f: [1e-15, 5e-15, 1e-14]\n'},
       {path:'layout/README.md',role:'layout',content:'# Cell layout\n\nTarget a legal cell height and document pin access, rails and well structure.\n'},
       {path:'verification/truth_table.csv',role:'documentation',content:'A,Y\n0,1\n1,0\n'},
@@ -154,7 +203,19 @@ endmodule
 }
 
 export function loadProjects():StoredProject[] {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)??'[]') as StoredProject[] }
+  try {
+    const projects=JSON.parse(localStorage.getItem(STORAGE_KEY)??'[]') as StoredProject[]
+    let changed=false
+    const upgraded=projects.map(project=>{
+      const starters=starterFiles(project.kind,project.name,project.pdk)
+      const missing=starters.filter(file=>!project.files.some(existing=>existing.path===file.path))
+      if(!missing.length) return project
+      changed=true
+      return {...project,files:[...project.files,...missing]}
+    })
+    if(changed) saveProjects(upgraded)
+    return upgraded
+  }
   catch { return [] }
 }
 

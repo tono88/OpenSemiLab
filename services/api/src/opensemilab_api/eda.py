@@ -4,8 +4,9 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class EdaRunRequest(BaseModel):
-    action: Literal["lint", "simulate", "synthesize"]
+    action: Literal["lint", "simulate", "synthesize", "spice"]
     top: str = Field("top", pattern=r"^[A-Za-z_][A-Za-z0-9_$]*$")
+    entry: str | None = None
     sources: dict[str, str]
 
     @field_validator("sources")

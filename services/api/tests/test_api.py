@@ -61,3 +61,16 @@ def test_microcontroller_plan_connects_rtl_to_gds():
     assert "lint, simulation and synthesis" in result["notice"]
     tools = {tool for stage in result["stages"] for tool in stage["tools"]}
     assert {"Yosys", "LibreLane", "OpenROAD", "KLayout"} <= tools
+
+
+def test_sensor_interface_connects_digital_and_spice_execution():
+    response = client.post("/api/v1/design/plan", json={
+        "name": "Temperature sensor", "kind": "sensor_interface", "pdk": "gf180mcuD",
+        "level": "engineering", "language": "systemverilog"
+    })
+    assert response.status_code == 200
+    result = response.json()
+    assert result["runner_available"] is True
+    assert "SPICE simulation" in result["notice"]
+    ready_stages = {stage["id"] for stage in result["stages"] if stage["status"] == "ready"}
+    assert {"requirements", "frontend", "digital"} <= ready_stages
