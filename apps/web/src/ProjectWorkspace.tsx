@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { ProjectFile, StoredProject } from './projectStore'
 import type { Artifact, RunResult, RunSnapshot, SimulationData } from './eda-results'
 import SpiceViewer from './SpiceViewer'
 import WaveformViewer from './WaveformViewer'
 import PhysicalDashboard from './PhysicalDashboard'
 import RunHistory from './RunHistory'
+import ToolCoverage, { type ToolIntegration } from './ToolCoverage'
 
 type ArtifactKind='layout'|'netlist'|'timing'|'waveform'|'report'|'configuration'|'other'
 
@@ -57,9 +58,14 @@ function compactSimulation(data:SimulationData|undefined):SimulationData|undefin
 }
 
 const HDL_EXTENSIONS=['.sv','.v']
+const VHDL_EXTENSIONS=['.vhd','.vhdl']
 const SPICE_EXTENSIONS=['.spice','.cir','.ckt','.lib']
-type Action='lint'|'simulate'|'synthesize'|'spice'
+type Action='lint'|'simulate'|'synthesize'|'spice'|'vhdl'
 interface ToolState { available:boolean }
+
+function WizardStep({id,number,title,summary,open,onToggle,children,status}:{id:string;number:string;title:string;summary:string;open:boolean;onToggle:()=>void;children:ReactNode;status?:string}) {
+  return <section className={`wizard-step ${open?'open':''}`} id={`wizard-${id}`}><button className="wizard-step-header" onClick={onToggle} aria-expanded={open}><span>{number}</span><div><b>{title}</b><small>{summary}</small></div>{status&&<em>{status}</em>}<i>{open?'−':'+'}</i></button>{open&&<div className="wizard-step-body">{children}</div>}</section>
+}
 
 const EXECUTION_DEFAULTS:Record<string,{rtlTop?:string;testbenchTop?:string;spiceEntry?:string}>={
   microcontroller:{rtlTop:'top',testbenchTop:'tb_top'},
@@ -84,6 +90,8 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
   const [result,setResult]=useState<RunResult|null>(null)
   const [error,setError]=useState('')
   const [tools,setTools]=useState<Record<string,ToolState>>({})
+  const [integrations,setIntegrations]=useState<ToolIntegration[]>([])
+  const [openSteps,setOpenSteps]=useState(()=>new Set(['files','run']))
   const [worker,setWorker]=useState<'checking'|'online'|'degraded'|'offline'>('checking')
   const [clockPort,setClockPort]=useState(String(initialPhysical.clock_port??'clk'))
   const [clockPeriod,setClockPeriod]=useState(Number(initialPhysical.clock_period_ns??10))
@@ -106,6 +114,7 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
     } catch { return fallback }
   },[project.kind,project.files])
   const hdlSources=project.files.filter(file=>HDL_EXTENSIONS.some(ext=>file.path.endsWith(ext)))
+  const vhdlSources=project.files.filter(file=>VHDL_EXTENSIONS.some(ext=>file.path.toLowerCase().endsWith(ext)))
   const rtlSources=hdlSources.filter(file=>file.role==='source')
   const testbenches=hdlSources.filter(file=>file.role==='testbench')
   const spiceSources=project.files.filter(file=>SPICE_EXTENSIONS.some(ext=>file.path.toLowerCase().endsWith(ext)))
@@ -121,7 +130,7 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
     try {
       const response=await fetch('/api/v1/eda/capabilities')
       if(!response.ok) throw new Error()
-      const body=await response.json();setTools(body.tools??{});setWorker(body.ready?'online':'degraded')
+      const body=await response.json();setTools(body.tools??{});setIntegrations(body.integrations??[]);setWorker(body.ready?'online':'degraded')
     } catch {setWorker('offline')}
   }
   useEffect(()=>{void refreshCapabilities()},[])
@@ -169,12 +178,12 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
 
   async function run(action:Action) {
     setRunning(action);setError('');setResult(null)
-    const relevant=action==='spice'?spiceSources:(action==='simulate'?[...rtlSources,...testbenches]:rtlSources)
+    const relevant=action==='spice'?spiceSources:action==='vhdl'?vhdlSources:(action==='simulate'?[...rtlSources,...testbenches]:rtlSources)
     const sources=Object.fromEntries(relevant.map(file=>[file.path,file.content]))
     try {
       if(action==='simulate'&&!testbenches.length) throw new Error(es?'Agregue un archivo con rol testbench antes de simular.':'Add a file with the testbench role before simulation.')
       if(action==='spice'&&!spiceEntry) throw new Error(es?'Este proyecto no contiene un netlist SPICE ejecutable.':'This project does not contain an executable SPICE netlist.')
-      const top=action==='simulate'?execution.testbenchTop:execution.rtlTop
+      const top=action==='simulate'||action==='vhdl'?execution.testbenchTop:execution.rtlTop
       const response=await fetch('/api/v1/eda/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,top:top??'top',entry:action==='spice'?spiceEntry?.path:undefined,sources})})
       const data=await response.json();if(!response.ok) throw new Error(data.detail??'EDA execution failed');acceptResult(data,action)
     } catch(reason) {setError(reason instanceof Error?reason.message:'EDA execution failed')}
@@ -218,21 +227,21 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
   }
 
   const waveform=result?.artifacts.find(artifact=>artifact.name.toLowerCase().endsWith('.vcd')&&artifact.encoding!=='base64')
+  const toggleStep=(id:string)=>setOpenSteps(current=>{const next=new Set(current);next.has(id)?next.delete(id):next.add(id);return next})
+  const goStep=(id:string)=>{setOpenSteps(current=>new Set(current).add(id));window.setTimeout(()=>document.getElementById(`wizard-${id}`)?.scrollIntoView({behavior:'smooth',block:'start'}),0)}
+  useEffect(()=>{if(result||error)setOpenSteps(current=>new Set(current).add('results'))},[result,error])
 
   return <section className="project-workspace">
     <div className="project-toolbar"><div><span>{es?'PROYECTO ACTIVO':'ACTIVE PROJECT'}</span><h2>{project.name}</h2><small>{project.kind} · {project.pdk} · {es?'guardado automático en este navegador':'autosaved in this browser'}</small></div><div><button onClick={exportProject}>{es?'Exportar':'Export'}</button><button onClick={onClose}>{es?'Cerrar':'Close'}</button></div></div>
     <div className={`workspace-worker ${worker}`}><i/>{worker==='online'?(es?'IIC-OSIC listo para ejecutar':'IIC-OSIC ready to run'):worker==='degraded'?(es?'Worker conectado; algunas herramientas no están disponibles':'Worker connected; some tools are unavailable'):worker==='checking'?(es?'Comprobando herramientas…':'Checking tools…'):(es?'Worker desconectado':'Worker offline')}<button onClick={refreshCapabilities}>{es?'Comprobar':'Check'}</button></div>
-    <div className="project-grid">
+    <nav className="wizard-nav" aria-label={es?'Etapas del proyecto':'Project stages'}>{[['files','01',es?'Diseño':'Design'],['run','02',es?'Verificar':'Verify'],['physical','03','GDSII'],['results','04',es?'Resultados':'Results'],['history','05',es?'Historial':'History']].map(([id,number,label])=><button onClick={()=>goStep(id)} key={id}><span>{number}</span>{label}</button>)}</nav>
+    <WizardStep id="files" number="01" title={es?'Diseño y archivos':'Design and files'} summary={es?'Edite fuentes, bancos de prueba y configuración':'Edit sources, testbenches, and configuration'} open={openSteps.has('files')} onToggle={()=>toggleStep('files')} status={`${project.files.length} ${es?'archivos':'files'}`}><div className="project-grid">
       <aside className="file-tree"><div><b>{es?'ARCHIVOS':'FILES'}</b><button onClick={addFile}>＋</button></div>{Object.entries(groups).map(([group,files])=><section key={group}><span>{group}</span>{files.map(file=><button className={file.path===selected?.path?'active':''} onClick={()=>setSelectedPath(file.path)} key={file.path}>{file.path.split('/').pop()}</button>)}</section>)}</aside>
       <div className="file-editor"><div><span>{selected?.path}</span><i>{selected?.role}</i><button onClick={removeFile}>{es?'Eliminar':'Delete'}</button></div><textarea value={selected?.content??''} onChange={event=>updateFile(event.target.value)} spellCheck={false}/></div>
-    </div>
-    {(rtlSources.length||spiceSources.length)?<div className="execution-panel"><div><b>{es?'EJECUCIÓN DEL PROYECTO':'PROJECT EXECUTION'}</b><small>{execution.rtlTop?`RTL top: ${execution.rtlTop}`:''}{execution.spiceEntry?` · SPICE: ${execution.spiceEntry}`:''}</small></div><div className="project-actions">{rtlSources.length>0&&<button disabled={!!running||worker==='offline'||!(tools.verible_lint?.available||tools.verilator?.available)} onClick={()=>run('lint')}>01 · {running==='lint'?(es?'Ejecutando…':'Running…'):(es?'Analizar RTL':'Lint RTL')}<small>{tools.verible_lint?.available?'Verible':'Verilator'}</small></button>}{testbenches.length>0&&<button disabled={!!running||worker==='offline'||!(tools.iverilog?.available&&tools.vvp?.available)} onClick={()=>run('simulate')}>02 · {running==='simulate'?(es?'Ejecutando…':'Running…'):(es?'Simular RTL':'Simulate RTL')}<small>Icarus Verilog</small></button>}{rtlSources.length>0&&<button disabled={!!running||worker==='offline'||!tools.yosys?.available} onClick={()=>run('synthesize')}>03 · {running==='synthesize'?(es?'Ejecutando…':'Running…'):(es?'Sintetizar':'Synthesize')}<small>Yosys</small></button>}{spiceEntry&&<button disabled={!!running||worker==='offline'||!tools.ngspice?.available} onClick={()=>run('spice')}>04 · {running==='spice'?(es?'Ejecutando…':'Running…'):(es?'Simular SPICE':'Simulate SPICE')}<small>ngspice</small></button>}</div></div>:<div className="adapter-message">{es?'Este proyecto aún no contiene archivos ejecutables.':'This project does not contain executable files yet.'}</div>}
-    {rtlSources.length>0&&['sky130A','gf180mcuD'].includes(project.pdk)&&<div className="physical-panel"><div className="physical-heading"><span>05</span><div><b>{es?'IMPLEMENTACIÓN FÍSICA RTL → GDSII':'PHYSICAL IMPLEMENTATION RTL → GDSII'}</b><small>{es?'LibreLane coordina Yosys, OpenROAD, OpenSTA y verificación física.':'LibreLane orchestrates Yosys, OpenROAD, OpenSTA and physical verification.'}</small></div></div><div className="physical-steps">{['Synthesis','Floorplan','Placement','CTS','Routing','Sign-off'].map((stage,index)=><i className={running==='physical'?'active':result?.engine==='LibreLane/OpenROAD'&&result.success?'done':''} key={stage}><span>{String(index+1).padStart(2,'0')}</span>{stage}</i>)}</div><div className="physical-config"><label>{es?'Puerto de reloj':'Clock port'}<input value={clockPort} onChange={event=>setClockPort(event.target.value)}/></label><label>{es?'Período (ns)':'Period (ns)'}<input type="number" min="0.1" max="1000" step="0.1" value={clockPeriod} onChange={event=>setClockPeriod(Number(event.target.value))}/></label><label>{es?'Ancho del dado (µm)':'Die width (µm)'}<input type="number" min="30" max="5000" value={dieWidth} onChange={event=>setDieWidth(Number(event.target.value))}/></label><label>{es?'Alto del dado (µm)':'Die height (µm)'}<input type="number" min="30" max="5000" value={dieHeight} onChange={event=>setDieHeight(Number(event.target.value))}/></label><label>{es?'Utilización del núcleo (%)':'Core utilization (%)'}<input type="number" min="5" max="80" value={utilization} onChange={event=>setUtilization(Number(event.target.value))}/></label><button disabled={!!running||worker==='offline'||!tools.librelane?.available} onClick={runPhysical}>{running==='physical'?(es?'Implementando…':'Implementing…'):(es?'Ejecutar RTL → GDSII':'Run RTL → GDSII')}<small>{tools.librelane?.available?'LibreLane Classic':(es?'No disponible':'Unavailable')}</small></button></div>{physicalStatus&&<p className="physical-status">{physicalStatus}</p>}</div>}
-    {error&&<p className="error">{error}</p>}
-    {result?.engine==='ngspice'&&result.simulation&&<SpiceViewer data={result.simulation} locale={locale}/>}
-    {waveform&&<WaveformViewer content={waveform.content} locale={locale}/>}
-    {result?.summary&&<PhysicalDashboard summary={result.summary} artifacts={result.artifacts} locale={locale}/>}
-    {result&&<div className="console"><div className="console-header"><span>{result.engine} · {result.duration_ms} ms{result.pdk?` · ${result.pdk}`:''}{result.scl?` / ${result.scl}`:''}</span><b className={result.success?'success':'failed'}>{result.success?(es?'CORRECTO':'PASSED'):(es?'FALLÓ':'FAILED')} · EXIT {result.exit_code}</b></div><details className="console-output" open={!result.success}><summary>{es?'Registro de ejecución':'Execution log'} <span>{result.output?`${result.output.split('\n').length} ${es?'líneas':'lines'}`:(es?'sin salida':'no output')}</span></summary><pre>{result.output||(es?'La herramienta terminó sin salida de consola.':'The tool completed without console output.')}</pre></details>{result.artifacts.length>0&&<ArtifactBrowser artifacts={result.artifacts} locale={locale} onDownload={downloadArtifact}/>}</div>}
-    <RunHistory runs={runHistory} locale={locale} onClear={clearHistory}/>
+    </div></WizardStep>
+    <WizardStep id="run" number="02" title={es?'Verificación y simulación':'Verification and simulation'} summary={es?'Ejecute solo la herramienta que necesita':'Run only the tool you need'} open={openSteps.has('run')} onToggle={()=>toggleStep('run')} status={worker==='online'?(es?'Listo':'Ready'):worker}><ToolCoverage integrations={integrations} locale={locale}/>{(rtlSources.length||spiceSources.length||vhdlSources.length)?<div className="execution-panel"><div><b>{es?'EJECUCIÓN DEL PROYECTO':'PROJECT EXECUTION'}</b><small>{execution.rtlTop?`RTL top: ${execution.rtlTop}`:''}{execution.spiceEntry?` · SPICE: ${execution.spiceEntry}`:''}</small></div><div className="project-actions">{rtlSources.length>0&&<button disabled={!!running||worker==='offline'||!(tools.verible_lint?.available||tools.verilator?.available)} onClick={()=>run('lint')}>{running==='lint'?(es?'Ejecutando…':'Running…'):(es?'Analizar RTL':'Lint RTL')}<small>{tools.verible_lint?.available?'Verible':'Verilator'}</small></button>}{testbenches.length>0&&<button disabled={!!running||worker==='offline'||!(tools.iverilog?.available&&tools.vvp?.available)} onClick={()=>run('simulate')}>{running==='simulate'?(es?'Ejecutando…':'Running…'):(es?'Simular RTL':'Simulate RTL')}<small>Icarus Verilog</small></button>}{vhdlSources.length>0&&<button disabled={!!running||worker==='offline'||!tools.ghdl?.available} onClick={()=>run('vhdl')}>{running==='vhdl'?(es?'Ejecutando…':'Running…'):(es?'Simular VHDL':'Simulate VHDL')}<small>GHDL 2008</small></button>}{rtlSources.length>0&&<button disabled={!!running||worker==='offline'||!tools.yosys?.available} onClick={()=>run('synthesize')}>{running==='synthesize'?(es?'Ejecutando…':'Running…'):(es?'Sintetizar':'Synthesize')}<small>Yosys</small></button>}{spiceEntry&&<button disabled={!!running||worker==='offline'||!tools.ngspice?.available} onClick={()=>run('spice')}>{running==='spice'?(es?'Ejecutando…':'Running…'):(es?'Simular SPICE':'Simulate SPICE')}<small>ngspice</small></button>}</div></div>:<div className="adapter-message">{es?'Este proyecto aún no contiene archivos ejecutables.':'This project does not contain executable files yet.'}</div>}</WizardStep>
+    <WizardStep id="physical" number="03" title={es?'Implementación física':'Physical implementation'} summary="RTL → GDSII · LibreLane / OpenROAD" open={openSteps.has('physical')} onToggle={()=>toggleStep('physical')} status={result?.summary?(result.success?'PASS':'FAIL'):undefined}>{rtlSources.length>0&&['sky130A','gf180mcuD'].includes(project.pdk)?<div className="physical-panel"><div className="physical-heading"><span>GDS</span><div><b>{es?'IMPLEMENTACIÓN FÍSICA RTL → GDSII':'PHYSICAL IMPLEMENTATION RTL → GDSII'}</b><small>{es?'LibreLane coordina Yosys, OpenROAD, OpenSTA, Magic, Netgen y KLayout.':'LibreLane orchestrates Yosys, OpenROAD, OpenSTA, Magic, Netgen, and KLayout.'}</small></div></div><div className="physical-steps">{['Synthesis','Floorplan','Placement','CTS','Routing','Sign-off'].map((stage,index)=><i className={running==='physical'?'active':result?.engine==='LibreLane/OpenROAD'&&result.success?'done':''} key={stage}><span>{String(index+1).padStart(2,'0')}</span>{stage}</i>)}</div><div className="physical-config"><label>{es?'Puerto de reloj':'Clock port'}<input value={clockPort} onChange={event=>setClockPort(event.target.value)}/></label><label>{es?'Período (ns)':'Period (ns)'}<input type="number" min="0.1" max="1000" step="0.1" value={clockPeriod} onChange={event=>setClockPeriod(Number(event.target.value))}/></label><label>{es?'Ancho (µm)':'Width (µm)'}<input type="number" min="30" max="5000" value={dieWidth} onChange={event=>setDieWidth(Number(event.target.value))}/></label><label>{es?'Alto (µm)':'Height (µm)'}<input type="number" min="30" max="5000" value={dieHeight} onChange={event=>setDieHeight(Number(event.target.value))}/></label><label>{es?'Utilización (%)':'Utilization (%)'}<input type="number" min="5" max="80" value={utilization} onChange={event=>setUtilization(Number(event.target.value))}/></label><button disabled={!!running||worker==='offline'||!tools.librelane?.available} onClick={runPhysical}>{running==='physical'?(es?'Implementando…':'Implementing…'):(es?'Ejecutar RTL → GDSII':'Run RTL → GDSII')}<small>LibreLane Classic</small></button></div>{physicalStatus&&<p className="physical-status">{physicalStatus}</p>}</div>:<div className="adapter-message">{es?'Disponible para proyectos RTL con SKY130 o GF180.':'Available for RTL projects using SKY130 or GF180.'}</div>}</WizardStep>
+    <WizardStep id="results" number="04" title={es?'Resultados y análisis':'Results and analysis'} summary={es?'Gráficas, ondas, layout, consola y artefactos':'Plots, waveforms, layout, console, and artifacts'} open={openSteps.has('results')} onToggle={()=>toggleStep('results')} status={result?.success?'PASS':result?'FAIL':undefined}>{error&&<p className="error">{error}</p>}{result?.engine==='ngspice'&&result.simulation&&<SpiceViewer data={result.simulation} locale={locale}/>} {waveform&&<WaveformViewer content={waveform.content} locale={locale}/>} {result?.summary&&<PhysicalDashboard summary={result.summary} artifacts={result.artifacts} locale={locale}/>} {result?<div className="console"><div className="console-header"><span>{result.engine} · {result.duration_ms} ms{result.pdk?` · ${result.pdk}`:''}</span><b className={result.success?'success':'failed'}>{result.success?(es?'CORRECTO':'PASSED'):(es?'FALLÓ':'FAILED')} · EXIT {result.exit_code}</b></div><details className="console-output" open={!result.success}><summary>{es?'Registro de ejecución':'Execution log'}</summary><pre>{result.output||(es?'La herramienta terminó sin salida.':'The tool completed without output.')}</pre></details>{result.artifacts.length>0&&<ArtifactBrowser artifacts={result.artifacts} locale={locale} onDownload={downloadArtifact}/>}</div>:!error&&<div className="empty-results">{es?'Ejecute una etapa para ver aquí todos sus resultados.':'Run a stage to see all of its results here.'}</div>}</WizardStep>
+    <WizardStep id="history" number="05" title={es?'Comparación e historial':'Comparison and history'} summary={es?'Compare las últimas ejecuciones sin salir del proyecto':'Compare recent runs without leaving the project'} open={openSteps.has('history')} onToggle={()=>toggleStep('history')} status={`${runHistory.length}`}><RunHistory runs={runHistory} locale={locale} onClear={clearHistory}/></WizardStep>
   </section>
 }

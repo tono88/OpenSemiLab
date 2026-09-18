@@ -30,10 +30,13 @@ Open-source EDA and multiphysics tools are powerful, but they expose different i
 - Map each stage to relevant IIC-OSIC-TOOLS engines while clearly distinguishing connected and pending adapters.
 - Edit SystemVerilog in the browser and run Verible/Verilator lint, Icarus Verilog simulation, and Yosys synthesis in IIC-OSIC-TOOLS.
 - Inspect automatically captured VCD waveforms with signal selection, zoom, and time-window navigation.
+- Simulate VHDL-2008 projects with GHDL and capture their VCD output through the same portable result contract.
 - Download the synthesized Yosys JSON netlist and inspect complete console output.
 - Plot normalized ngspice `.print` results for DC, transient, AC, and noise analyses when those vectors are present in the testbench.
 - Run LibreLane Classic asynchronously for SKY130/GF180, explore real DEF placement, density, 2D routing and an interactive exploded 3D layer view, review timing/area/DRC evidence in the sign-off center, and export bounded final GDSII, DEF, LEF, netlist, timing, metrics, log, and JSON report artifacts.
 - Keep a bounded local execution history and compare implementation and simulation results.
+- Navigate active projects through a compact five-stage vertical wizard, with an explicit IIC-OSIC integration matrix.
+- Replay numeric simulation traces as animations, zoom them, and pan horizontally by dragging or using the window control.
 - Create and configure a 1D silicon PN junction.
 - Change doping, length, temperature, area, bias range, and mesh density.
 - Run a deterministic drift-diffusion-inspired educational approximation.
@@ -58,6 +61,18 @@ flowchart TD
 ```
 
 The engine boundary is deliberate: copyleft tools can run as separate processes or services while OpenSemiLab keeps a stable, engine-neutral data contract. See [docs/LICENSING.md](docs/LICENSING.md).
+
+### IIC-OSIC integration scope
+
+IIC-OSIC-TOOLS is a broad distribution rather than one engine. OpenSemiLab reports each relevant tool as one of three levels instead of claiming that every installed executable is connected:
+
+| Level | Current tools | Meaning |
+|---|---|---|
+| Direct | Verible/Verilator, Icarus/VVP, GHDL, Yosys, ngspice, LibreLane | Invoked by a bounded worker workflow with normalized results. |
+| Orchestrated | OpenROAD, OpenSTA, KLayout, Magic, Netgen | Invoked as part of the LibreLane physical flow. |
+| Detected / next adapter | Xyce, openEMS, Xschem, GTKWave, SymbiYosys, nextpnr, gds3d, CACE | Availability is reported honestly; a safe web workflow is not yet exposed. |
+
+GUI editors, Python libraries, PDK managers and highly specialized utilities remain available in the underlying image but are not mislabeled as web integrations.
 
 ## Quick start
 
@@ -114,12 +129,13 @@ The built-in solver is intentionally labeled **educational**. It produces transp
 
 ## Roadmap
 
-1. Add live per-stage LibreLane progress and extend the layer-aware DEF explorer with exact polygon rendering from GDSII.
-2. Extend ngspice normalization from `.print` tables to native rawfiles, PDK-defined PVT corners, mismatch models, and Xschem round trips.
-3. Execute a validated DEVSIM diode experiment and normalize its output.
-4. Add optional server-side project storage and Git synchronization while retaining local JSON portability.
-5. Add MOS capacitor and MOSFET experiment templates.
-6. Integrate Gmsh, VTK, and electro-thermal adapters.
+1. Add live per-stage LibreLane progress and extend the layer-aware DEF explorer with exact polygon rendering from GDSII/gds3d.
+2. Connect SymbiYosys formal jobs, FPGA nextpnr/bitstream flows, and Xyce as bounded headless adapters.
+3. Extend ngspice normalization from `.print` tables to native rawfiles, PDK-defined PVT corners, mismatch models, and Xschem round trips.
+4. Execute a validated DEVSIM diode experiment and normalize its output.
+5. Add optional server-side project storage and Git synchronization while retaining local JSON portability.
+6. Add MOS capacitor and MOSFET experiment templates.
+7. Integrate Gmsh, VTK, and electro-thermal adapters.
 
 ## Contributing
 

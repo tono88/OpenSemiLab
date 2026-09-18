@@ -239,5 +239,36 @@ export function saveProjects(projects:StoredProject[]):void {
 
 export function createProject(input:Pick<StoredProject,'name'|'kind'|'pdk'|'level'|'language'>):StoredProject {
   const now=new Date().toISOString()
-  return {...input,id:crypto.randomUUID(),createdAt:now,updatedAt:now,files:starterFiles(input.kind,input.name,input.pdk)}
+  let files=starterFiles(input.kind,input.name,input.pdk)
+  if(input.language==='vhdl'&&['microcontroller','fpga_prototype'].includes(input.kind)) {
+    files=files.filter(file=>!['.sv','.v'].some(extension=>file.path.endsWith(extension)))
+    files.push(
+      {path:'rtl/top.vhd',role:'source',content:`library ieee;
+use ieee.std_logic_1164.all;
+entity top is port(clk, rst_n : in std_logic; led : out std_logic); end entity;
+architecture rtl of top is
+  signal state : std_logic := '0';
+begin
+  process(clk) begin
+    if rising_edge(clk) then
+      if rst_n='0' then state <= '0'; else state <= not state; end if;
+    end if;
+  end process;
+  led <= state;
+end architecture;
+`},
+      {path:'tb/tb_top.vhd',role:'testbench',content:`library ieee;
+use ieee.std_logic_1164.all;
+entity tb_top is end entity;
+architecture sim of tb_top is
+  signal clk : std_logic := '0'; signal rst_n : std_logic := '0'; signal led : std_logic;
+begin
+  dut: entity work.top port map(clk=>clk,rst_n=>rst_n,led=>led);
+  clk <= not clk after 5 ns;
+  process begin wait for 12 ns; rst_n <= '1'; wait for 80 ns; report "PASS VHDL simulation"; wait; end process;
+end architecture;
+`},
+    )
+  }
+  return {...input,id:crypto.randomUUID(),createdAt:now,updatedAt:now,files}
 }

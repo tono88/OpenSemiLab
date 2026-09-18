@@ -13,6 +13,14 @@ SPEC.loader.exec_module(worker)
 
 
 class WorkerResultTests(unittest.TestCase):
+    def test_capabilities_explain_integration_level(self):
+        with patch.object(worker.shutil, "which", return_value="/usr/bin/tool"):
+            data = worker.capabilities()
+        integrations = {item["tool"]: item["level"] for item in data["integrations"]}
+        self.assertEqual(integrations["ghdl"], "direct")
+        self.assertEqual(integrations["openroad"], "orchestrated")
+        self.assertEqual(integrations["openems"], "available")
+
     def test_ngspice_print_table_becomes_chart_series(self):
         log = """
 Index   v-sweep   v(a)       v(y)
@@ -79,6 +87,26 @@ Index   v-sweep   v(a)       v(y)
         self.assertEqual(summary["tns_ns"], -1.75)
         self.assertEqual(summary["drc_violations"], 3)
         self.assertEqual(summary["die_area_um2"], 12000)
+
+    def test_vhdl_simulation_runs_three_ghdl_phases_and_collects_vcd(self):
+        payload = {"action": "vhdl", "top": "tb_top", "sources": {"rtl/top.vhd": "entity top is end; architecture rtl of top is begin end;"}}
+        with tempfile.TemporaryDirectory() as temporary:
+            original_root = worker.WORK_ROOT
+            worker.WORK_ROOT = Path(temporary)
+            commands = []
+            def fake_run(command, cwd, timeout_seconds=worker.TIMEOUT_SECONDS, env_overrides=None):
+                commands.append(command)
+                if "-r" in command:
+                    (cwd / "waveform.vcd").write_text("$timescale 1 ns $end\n#0\n", encoding="utf-8")
+                return {"exit_code": 0, "output": "ok", "duration_ms": 1, "timed_out": False}
+            try:
+                with patch.object(worker.shutil, "which", return_value="/usr/bin/ghdl"), patch.object(worker, "run_command", side_effect=fake_run):
+                    result = worker.execute(payload)
+            finally:
+                worker.WORK_ROOT = original_root
+        self.assertTrue(result["success"])
+        self.assertEqual([next(flag for flag in ("-a", "-e", "-r") if flag in command) for command in commands], ["-a", "-e", "-r"])
+        self.assertEqual(result["artifacts"][0]["name"], "waveform.vcd")
 
 
 if __name__ == "__main__":

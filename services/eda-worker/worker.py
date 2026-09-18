@@ -49,6 +49,36 @@ TOOL_BINARIES = {
     "magic": "magic",
     "netgen": "netgen",
     "openems": "openEMS",
+    "xschem": "xschem",
+    "gtkwave": "gtkwave",
+    "sby": "sby",
+    "nextpnr_ice40": "nextpnr-ice40",
+    "gds3d": "gds3d",
+    "cace": "cace",
+}
+
+TOOL_INTEGRATIONS = {
+    "verible_lint": ("direct", "RTL lint"),
+    "verilator": ("direct", "RTL lint fallback"),
+    "iverilog": ("direct", "Verilog simulation"),
+    "vvp": ("direct", "Verilog runtime"),
+    "ghdl": ("direct", "VHDL simulation"),
+    "yosys": ("direct", "RTL synthesis"),
+    "ngspice": ("direct", "Analog simulation"),
+    "librelane": ("direct", "RTL-to-GDSII flow"),
+    "openroad": ("orchestrated", "Place and route through LibreLane"),
+    "opensta": ("orchestrated", "Timing through LibreLane"),
+    "klayout": ("orchestrated", "Physical verification and layout artifacts"),
+    "magic": ("orchestrated", "DRC/PEX through physical flow"),
+    "netgen": ("orchestrated", "LVS through physical flow"),
+    "xyce": ("available", "Alternative parallel SPICE"),
+    "openems": ("available", "RF electromagnetic simulation"),
+    "xschem": ("available", "Schematic editor; GUI adapter required"),
+    "gtkwave": ("available", "Waveform GUI; browser viewer is connected instead"),
+    "sby": ("available", "Formal verification"),
+    "nextpnr_ice40": ("available", "FPGA place and route"),
+    "gds3d": ("available", "Native GDS 3D viewer"),
+    "cace": ("available", "Circuit characterization"),
 }
 
 PHYSICAL_SCLS = {
@@ -81,6 +111,7 @@ def capabilities() -> dict[str, Any]:
         "simulate": tools["iverilog"]["available"] and tools["vvp"]["available"],
         "synthesize": tools["yosys"]["available"],
         "spice": tools["ngspice"]["available"],
+        "vhdl": tools["ghdl"]["available"],
         "physical": tools["librelane"]["available"] and any(target["available"] for target in targets.values()),
     }
     return {
@@ -90,6 +121,10 @@ def capabilities() -> dict[str, Any]:
         "all_actions_ready": all(actions.values()),
         "actions": actions,
         "tools": tools,
+        "integrations": [
+            {"tool": name, "level": level, "purpose": purpose, "available": tools[name]["available"]}
+            for name, (level, purpose) in TOOL_INTEGRATIONS.items()
+        ],
         "physical_targets": targets,
         "environment": {
             "tools_root": os.getenv("TOOLS"),
@@ -110,7 +145,12 @@ def validate_sources(raw: Any, action: str) -> dict[str, str]:
             or any(part in {"", ".", ".."} or not SAFE_PATH_COMPONENT.fullmatch(part) for part in path.parts)
         ):
             raise ValueError(f"unsafe source filename: {filename!r}")
-        allowed_suffixes = {".spice", ".cir", ".ckt", ".lib"} if action == "spice" else {".v", ".sv", ".vh", ".svh"}
+        if action == "spice":
+            allowed_suffixes = {".spice", ".cir", ".ckt", ".lib"}
+        elif action == "vhdl":
+            allowed_suffixes = {".vhd", ".vhdl"}
+        else:
+            allowed_suffixes = {".v", ".sv", ".vh", ".svh"}
         if Path(filename).suffix.lower() not in allowed_suffixes:
             raise ValueError(f"unsupported source type: {filename}")
         if not isinstance(content, str):
@@ -301,8 +341,8 @@ def physical_summary(job_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
 
 def execute(payload: dict[str, Any]) -> dict[str, Any]:
     action = payload.get("action")
-    if action not in {"lint", "simulate", "synthesize", "spice", "physical"}:
-        raise ValueError("action must be lint, simulate, synthesize, spice, or physical")
+    if action not in {"lint", "simulate", "synthesize", "spice", "vhdl", "physical"}:
+        raise ValueError("action must be lint, simulate, synthesize, spice, vhdl, or physical")
     sources = validate_sources(payload.get("sources"), action)
     top = payload.get("top", "top")
     if not isinstance(top, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_$]*", top):
@@ -410,6 +450,26 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
                 data_content = json.dumps(simulation_data, separators=(",", ":"))
                 artifacts.insert(0, text_artifact("simulation-data.json", data_content, "application/json"))
             return {"job_id": job_id, "action": action, "engine": "ngspice", "success": result["exit_code"] == 0, **result, "simulation": simulation_data, "artifacts": artifacts}
+        if action == "vhdl":
+            binary = TOOL_BINARIES["ghdl"]
+            if not shutil.which(binary):
+                raise RuntimeError("GHDL is unavailable after IIC-OSIC environment initialization")
+            analyze = run_command([binary, "-a", "--std=08", *source_names], job_dir)
+            if analyze["exit_code"] != 0:
+                return {"job_id": job_id, "action": action, "engine": "GHDL", "success": False, **analyze, "artifacts": []}
+            elaborate = run_command([binary, "-e", "--std=08", top], job_dir)
+            if elaborate["exit_code"] != 0:
+                elaborate["output"] = "ANALYZE\n" + analyze["output"] + "\nELABORATE\n" + elaborate["output"]
+                elaborate["duration_ms"] += analyze["duration_ms"]
+                return {"job_id": job_id, "action": action, "engine": "GHDL", "success": False, **elaborate, "artifacts": []}
+            result = run_command([binary, "-r", "--std=08", top, "--vcd=waveform.vcd", "--stop-time=1ms"], job_dir)
+            result["output"] = "ANALYZE\n" + analyze["output"] + "\nELABORATE\n" + elaborate["output"] + "\nSIMULATION\n" + result["output"]
+            result["duration_ms"] += analyze["duration_ms"] + elaborate["duration_ms"]
+            artifacts = []
+            waveform = job_dir / "waveform.vcd"
+            if waveform.exists() and waveform.stat().st_size <= MAX_WAVEFORM_BYTES:
+                artifacts.append(text_artifact("waveform.vcd", waveform.read_text(encoding="utf-8", errors="replace"), "text/x-vcd"))
+            return {"job_id": job_id, "action": action, "engine": "GHDL", "success": result["exit_code"] == 0, **result, "artifacts": artifacts}
         if action == "lint":
             binary = TOOL_BINARIES["verible_lint"]
             if shutil.which(binary):

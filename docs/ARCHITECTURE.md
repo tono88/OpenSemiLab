@@ -31,7 +31,7 @@ Adapters implement a small interface: capability metadata and `run(experiment)`.
 
 ### IIC-OSIC execution worker
 
-The EDA worker derives from the IIC-OSIC-TOOLS image and exposes only named workflows; it does not expose a browser-accessible shell or Docker socket. Connected workflows include RTL lint, Icarus Verilog simulation, Yosys synthesis, ngspice batch simulation, and asynchronous LibreLane/OpenROAD physical implementation. Physical jobs use validated SKY130/GF180 parameters, bounded runtime and artifact sizes, and a polling contract so long runs do not hold an API request open. Temporary workspaces are destroyed after each job after portable results have been captured.
+The EDA worker derives from the IIC-OSIC-TOOLS image and exposes only named workflows; it does not expose a browser-accessible shell or Docker socket. Connected workflows include RTL lint, Icarus Verilog simulation, GHDL VHDL-2008 simulation, Yosys synthesis, ngspice batch simulation, and asynchronous LibreLane/OpenROAD physical implementation. The capability response distinguishes direct adapters, tools orchestrated inside LibreLane, and installed tools awaiting a bounded adapter. Physical jobs use validated SKY130/GF180 parameters, bounded runtime and artifact sizes, and a polling contract so long runs do not hold an API request open. Temporary workspaces are destroyed after each job after portable results have been captured.
 
 ### Future worker boundary
 

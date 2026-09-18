@@ -1,4 +1,15 @@
 .plot-interactive svg { touch-action: none; }
+.plot-interactive svg.pannable { cursor: grab; }
+.plot-interactive svg.pannable:active { cursor: grabbing; }
+.plot-controls { display: flex; align-items: center; gap: 7px; padding: 8px 8px 0 62px; overflow-x: auto; }
+.plot-controls button { flex: 0 0 auto; border: 1px solid #ffffff1c; background: #07130f; color: #45e6a6; padding: 6px 8px; font: 8px DM Mono; cursor: pointer; }
+.plot-controls button span { color: #91a9a0; }
+.plot-controls label { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; color: #66877a; font: 7px DM Mono; }
+.plot-controls input { width: 82px; accent-color: #45e6a6; }
+.plot-controls b { color: #45e6a6; }
+.plot-controls select { border: 1px solid #ffffff1c; background: #06100c; color: #9ab6ab; padding: 4px; font: 7px DM Mono; }
+.plot-progress { height: 2px; margin: -3px 22px 5px 62px; background: #ffffff0b; }
+.plot-progress i { display: block; height: 100%; background: #45e6a6; transition: width .03s linear; }
 .plot .tick-label { fill: #58736a; font-size: 8px; }
 .plot .axis-title { fill: #78978b; font-size: 9px; }
 .plot .zero-line { stroke: #e8bd6966; stroke-width: 1; stroke-dasharray: 4 4; }
@@ -10,6 +21,8 @@
 .plot-legend i { display: block; width: 12px; height: 2px; }
 
 @media (max-width: 560px) {
+  .plot-controls { padding-left: 12px; }
+  .plot-progress { margin-left: 12px; }
   .plot { min-height: 220px; }
   .plot .tick-label { font-size: 7px; }
 }

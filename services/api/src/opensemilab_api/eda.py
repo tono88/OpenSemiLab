@@ -13,7 +13,7 @@ class PhysicalOptions(BaseModel):
 
 
 class EdaRunRequest(BaseModel):
-    action: Literal["lint", "simulate", "synthesize", "spice", "physical"]
+    action: Literal["lint", "simulate", "synthesize", "spice", "vhdl", "physical"]
     top: str = Field("top", pattern=r"^[A-Za-z_][A-Za-z0-9_$]*$")
     entry: str | None = None
     physical: PhysicalOptions | None = None
