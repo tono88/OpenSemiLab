@@ -1,37 +1,66 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent } from 'react'
 import type { Artifact, PhysicalSummary } from './eda-results'
+import { densityBins, parseDefLayout, type DefLayout } from './def-layout'
 
-interface DefPreview {width:number;height:number;components:{name:string;x:number;y:number}[]}
+type ViewMode='cells'|'density'|'routes'|'3d'
+const metric=(value:number|null|undefined,digits=2)=>value===null||value===undefined?'—':value.toFixed(digits)
+const formatLength=(value:number)=>value>=1000?`${(value/1000).toFixed(2)} mm`:`${value.toFixed(1)} µm`
 
-function parseDef(content:string):DefPreview|null {
-  const units=Number(content.match(/UNITS\s+DISTANCE\s+MICRONS\s+(\d+)/i)?.[1]??1000)
-  const die=content.match(/DIEAREA\s*\(\s*(-?\d+)\s+(-?\d+)\s*\)\s*\(\s*(-?\d+)\s+(-?\d+)\s*\)/i)
-  if(!die) return null
-  const x0=Number(die[1]),y0=Number(die[2]),x1=Number(die[3]),y1=Number(die[4])
-  const components:DefPreview['components']=[]
-  const block=content.match(/COMPONENTS\s+\d+\s*;([\s\S]*?)END COMPONENTS/i)?.[1]??''
-  for(const entry of block.split(';')) {
-    const match=entry.match(/-\s+(\S+)\s+\S+[\s\S]*?\+\s+(?:PLACED|FIXED)\s*\(\s*(-?\d+)\s+(-?\d+)\s*\)/i)
-    if(match) components.push({name:match[1],x:(Number(match[2])-x0)/units,y:(Number(match[3])-y0)/units})
-    if(components.length>=4000) break
-  }
-  return {width:(x1-x0)/units,height:(y1-y0)/units,components}
+function downloadReport(summary:PhysicalSummary,layout:DefLayout|null) {
+  const payload={schema:'opensemilab.physical-signoff.v1',generated_at:new Date().toISOString(),disclaimer:'Implementation evidence summary; not a foundry tapeout certification.',summary,layout:layout&&{width_um:layout.width,height_um:layout.height,placed_components:layout.components.length,routing_layers:layout.layers.map(layer=>({name:layer.name,segments:layer.segments.length,estimated_manhattan_length_um:Number(layer.lengthUm.toFixed(3))}))}}
+  const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:'application/json'}))
+  const anchor=document.createElement('a');anchor.href=url;anchor.download='physical-signoff-report.json';anchor.click();URL.revokeObjectURL(url)
 }
 
-function metric(value:number|null|undefined,digits=2) {return value===null||value===undefined?'—':value.toFixed(digits)}
+function LayoutViewer({layout,es}:{layout:DefLayout;es:boolean}) {
+  const [mode,setMode]=useState<ViewMode>(layout.layers.length?'3d':'cells')
+  const [visible,setVisible]=useState(()=>new Set(layout.layers.map(layer=>layer.name)))
+  const [azimuth,setAzimuth]=useState(-35),[tilt,setTilt]=useState(48),[separation,setSeparation]=useState(16),[zoom,setZoom]=useState(1)
+  const drag=useRef<{x:number;y:number;azimuth:number;tilt:number}|null>(null)
+  const layerKey=layout.layers.map(layer=>layer.name).join('|')
+  useEffect(()=>{setVisible(new Set(layout.layers.map(layer=>layer.name)));setMode(layout.layers.length?'3d':'cells')},[layerKey])
+  const bins=useMemo(()=>densityBins(layout),[layout]),maxBin=Math.max(1,...bins.flat())
+  const activeLayers=layout.layers.filter(layer=>visible.has(layer.name)),width=900,height=500,padding=44
+  const flatScale=Math.min((width-padding*2)/layout.width,(height-padding*2)/layout.height)*zoom,flatW=layout.width*flatScale,flatH=layout.height*flatScale
+  const flatX=(width-flatW)/2,flatY=(height-flatH)/2,radians=azimuth*Math.PI/180,elevation=tilt*Math.PI/180
+  const isoScale=Math.min(width/(layout.width+layout.height),height/(layout.height*.75+Math.max(1,layout.layers.length)*separation))*.72*zoom
+  const project=(x:number,y:number,z:number)=>{const cx=x-layout.width/2,cy=y-layout.height/2,rx=cx*Math.cos(radians)-cy*Math.sin(radians),ry=cx*Math.sin(radians)+cy*Math.cos(radians);return{x:width/2+rx*isoScale,y:height/2+ry*isoScale*Math.sin(elevation)-z*isoScale}}
+  const layerHeight=(index:number)=>8+(index+1)*separation
+  const polygon=(z:number)=>[[0,0],[layout.width,0],[layout.width,layout.height],[0,layout.height]].map(([x,y])=>{const p=project(x,y,z);return `${p.x},${p.y}`}).join(' ')
+  const setAll=(show:boolean)=>setVisible(new Set(show?layout.layers.map(layer=>layer.name):[]))
+  const isolate=(name:string)=>setVisible(new Set([name]))
+  const toggle=(name:string)=>setVisible(current=>{const next=new Set(current);next.has(name)?next.delete(name):next.add(name);return next})
+  const pointerDown=(event:ReactPointerEvent<SVGSVGElement>)=>{if(mode!=='3d')return;event.currentTarget.setPointerCapture(event.pointerId);drag.current={x:event.clientX,y:event.clientY,azimuth,tilt}}
+  const pointerMove=(event:ReactPointerEvent<SVGSVGElement>)=>{if(!drag.current)return;setAzimuth(drag.current.azimuth+(event.clientX-drag.current.x)*.45);setTilt(Math.max(12,Math.min(78,drag.current.tilt-(event.clientY-drag.current.y)*.3)))}
+  const pointerUp=()=>{drag.current=null}
+  const wheel=(event:WheelEvent<SVGSVGElement>)=>{event.preventDefault();setZoom(value=>Math.max(.55,Math.min(2.4,value*(event.deltaY>0?.92:1.08))))}
+
+  return <div className="layout-workbench">
+    <div className="layout-toolbar"><div className="view-tabs">{(['cells','density','routes','3d'] as ViewMode[]).map(item=><button key={item} className={mode===item?'active':''} onClick={()=>setMode(item)} disabled={(item==='routes'||item==='3d')&&!layout.layers.length}>{item==='cells'?(es?'Celdas':'Cells'):item==='density'?(es?'Densidad':'Density'):item==='routes'?(es?'Rutas 2D':'2D routes'):'3D'}</button>)}</div><div className="viewer-readout"><span>{layout.width.toFixed(1)} × {layout.height.toFixed(1)} µm</span><span>{layout.components.length} {es?'celdas':'cells'}</span><span>{layout.layers.length} {es?'capas':'layers'}</span></div></div>
+    <div className="layout-grid">
+      <div className="layout-stage">
+        <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={es?'Visor físico interactivo':'Interactive physical viewer'} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerUp} onWheel={wheel} className={mode==='3d'?'is-3d':''}>
+          {mode==='3d'?<><polygon points={polygon(0)} className="die-plane"/>{layout.components.slice(0,3500).map((component,index)=>{const p=project(component.x,component.y,1);return <circle key={`${component.name}-${index}`} cx={p.x} cy={p.y} r={Math.max(.55,isoScale*.16)} className="iso-cell"><title>{component.name}</title></circle>})}{activeLayers.map(layer=>{const originalIndex=layout.layers.findIndex(item=>item.name===layer.name),z=layerHeight(originalIndex),label=project(layout.width,0,z);return <g key={layer.name}><polygon points={polygon(z)} fill={layer.color} style={{color:layer.color}} className="layer-plane"/><text x={label.x+7} y={label.y} fill={layer.color} className="layer-label">{layer.name}</text>{layer.segments.map((segment,index)=>{const a=project(segment.x1,segment.y1,z),b=project(segment.x2,segment.y2,z);return <line key={index} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={layer.color} className="route-segment"/>})}</g>})}</>:<><rect x={flatX} y={flatY} width={flatW} height={flatH} className="die-outline"/>{mode==='density'&&bins.flatMap((row,y)=>row.map((count,x)=><rect key={`${x}-${y}`} x={flatX+x*flatW/12} y={flatY+(11-y)*flatH/12} width={flatW/12+.25} height={flatH/12+.25} fill={`rgba(255, ${Math.round(196-count/maxBin*120)}, 90, ${.06+count/maxBin*.78})`}><title>{count} {es?'celdas':'cells'}</title></rect>))}{mode==='cells'&&layout.components.map((component,index)=><rect key={`${component.name}-${index}`} x={flatX+component.x*flatScale} y={flatY+flatH-component.y*flatScale-2} width={Math.max(1.5,flatScale*.7)} height={Math.max(2,flatScale*1.3)} className="placed-cell"><title>{component.name}</title></rect>)}{mode==='routes'&&activeLayers.map(layer=><g key={layer.name}>{layer.segments.map((segment,index)=><line key={index} x1={flatX+segment.x1*flatScale} y1={flatY+flatH-segment.y1*flatScale} x2={flatX+segment.x2*flatScale} y2={flatY+flatH-segment.y2*flatScale} stroke={layer.color} className="route-segment"><title>{layer.name}</title></line>)}</g>)}</>}
+        </svg>
+        <div className="viewport-help">{mode==='3d'?(es?'Arrastra para orbitar · rueda para acercar':'Drag to orbit · wheel to zoom'):(es?'Vista superior escalada al dado':'Top view scaled to die')}</div>
+      </div>
+      <aside className="layer-panel">
+        <div className="layer-panel-title"><div><span>{es?'CAPAS DEF':'DEF LAYERS'}</span><b>{activeLayers.length}/{layout.layers.length}</b></div><div><button onClick={()=>setAll(true)}>{es?'Todas':'All'}</button><button onClick={()=>setAll(false)}>{es?'Ninguna':'None'}</button></div></div>
+        <div className="layer-list">{layout.layers.length?layout.layers.map(layer=><div key={layer.name} className={visible.has(layer.name)?'active':''}><button className="layer-toggle" onClick={()=>toggle(layer.name)}><i style={{background:layer.color}}/><span><b>{layer.name}</b><small>{layer.segments.length} seg · {formatLength(layer.lengthUm)}</small></span></button><button className="isolate-layer" onClick={()=>isolate(layer.name)}>{es?'solo':'only'}</button></div>):<p>{es?'Este DEF no contiene rutas extraíbles. Ejecuta el flujo completo de routing para activar las capas.':'This DEF has no extractable routes. Run the complete routing flow to activate layers.'}</p>}</div>
+        {mode==='3d'&&<div className="camera-controls"><label><span>{es?'Separación':'Separation'} <b>{separation}</b></span><input type="range" min="4" max="36" value={separation} onChange={event=>setSeparation(Number(event.target.value))}/></label><label><span>Zoom <b>{zoom.toFixed(1)}×</b></span><input type="range" min="55" max="240" value={zoom*100} onChange={event=>setZoom(Number(event.target.value)/100)}/></label><button onClick={()=>{setAzimuth(-35);setTilt(48);setZoom(1);setSeparation(16)}}>{es?'Restablecer cámara':'Reset camera'}</button></div>}
+      </aside>
+    </div>
+  </div>
+}
+
+function SignoffCenter({summary,layout,es}:{summary:PhysicalSummary;layout:DefLayout|null;es:boolean}) {
+  const checks=[{name:'Timing',value:summary.wns_ns===null||summary.tns_ns===null?'unknown':summary.wns_ns>=0&&summary.tns_ns>=0?'pass':'fail',detail:`WNS ${metric(summary.wns_ns,3)} ns · TNS ${metric(summary.tns_ns,3)} ns`},{name:'DRC',value:summary.drc_violations===null?'unknown':summary.drc_violations===0?'pass':'fail',detail:summary.drc_violations===null?(es?'Sin reporte':'No report'):`${summary.drc_violations} ${es?'violaciones':'violations'}`},{name:es?'Colocación':'Placement',value:(summary.cell_count??layout?.components.length??0)>0?'pass':'unknown',detail:`${summary.cell_count??layout?.components.length??0} ${es?'instancias':'instances'}`},{name:es?'Enrutamiento':'Routing',value:layout&&layout.layers.some(layer=>layer.segments.length)?'pass':'unknown',detail:layout?`${layout.layers.length} ${es?'capas · ':'layers · '}${layout.layers.reduce((sum,layer)=>sum+layer.segments.length,0)} seg`:(es?'DEF no disponible':'DEF unavailable')}]
+  const overall=checks.some(check=>check.value==='fail')?'fail':checks.every(check=>check.value==='pass')?'pass':'review',totalLength=layout?.layers.reduce((sum,layer)=>sum+layer.lengthUm,0)??0
+  return <div className="signoff-center"><div className="signoff-heading"><div><span>SIGN-OFF CENTER</span><b>{es?'Evidencia de implementación':'Implementation evidence'}</b></div><div className={`overall-status ${overall}`}>{overall==='pass'?'PASS':overall==='fail'?'FAIL':'REVIEW'}</div><button onClick={()=>downloadReport(summary,layout)}>{es?'Descargar reporte JSON':'Download JSON report'}</button></div><div className="signoff-checks">{checks.map(check=><div key={check.name} className={check.value}><i/><span><b>{check.name}</b><small>{check.detail}</small></span><strong>{check.value==='pass'?'PASS':check.value==='fail'?'FAIL':'—'}</strong></div>)}</div>{layout&&layout.layers.length>0&&<div className="layer-metrics"><table><thead><tr><th>{es?'Capa':'Layer'}</th><th>{es?'Segmentos':'Segments'}</th><th>{es?'Longitud Manhattan estimada':'Estimated Manhattan length'}</th><th>{es?'Participación':'Share'}</th></tr></thead><tbody>{layout.layers.map(layer=><tr key={layer.name}><td><i style={{background:layer.color}}/>{layer.name}</td><td>{layer.segments.length}</td><td>{formatLength(layer.lengthUm)}</td><td><div className="share-bar"><i style={{width:`${totalLength?layer.lengthUm/totalLength*100:0}%`,background:layer.color}}/></div>{totalLength?(layer.lengthUm/totalLength*100).toFixed(1):'0.0'}%</td></tr>)}</tbody></table></div>}<p className="signoff-note">{es?'Resumen automatizado de evidencia disponible. PASS no sustituye la revisión de reglas del PDK, LVS, antena, integridad de potencia ni certificación de tape-out.':'Automated summary of available evidence. PASS does not replace PDK rule review, LVS, antenna, power integrity, or tapeout certification.'}</p></div>
+}
 
 export default function PhysicalDashboard({summary,artifacts,locale}:{summary:PhysicalSummary;artifacts:Artifact[];locale:'es'|'en'}) {
-  const es=locale==='es'
-  const def=artifacts.find(artifact=>artifact.name.toLowerCase().endsWith('.def')&&artifact.encoding!=='base64')
-  const preview=useMemo(()=>def?parseDef(def.content):null,[def])
-  const viewWidth=720,viewHeight=380,padding=24
-  const scale=preview?Math.min((viewWidth-padding*2)/preview.width,(viewHeight-padding*2)/preview.height):1
-  const chipWidth=preview?preview.width*scale:0,chipHeight=preview?preview.height*scale:0
-  const offsetX=(viewWidth-chipWidth)/2,offsetY=(viewHeight-chipHeight)/2
-
-  return <section className="analysis-view physical-dashboard">
-    <div className="analysis-title"><div><span>RTL → GDSII</span><b>{es?'Resumen físico':'Physical summary'}</b></div><small>{summary.pdk} · {summary.scl}</small></div>
-    <div className="physical-metrics"><div><span>{es?'Área del dado':'Die area'}</span><b>{metric(summary.die_area_um2,0)}</b><small>µm²</small></div><div><span>{es?'Utilización objetivo':'Target utilization'}</span><b>{metric(summary.target_utilization_pct,0)}</b><small>%</small></div><div><span>{es?'Instancias':'Instances'}</span><b>{summary.cell_count??'—'}</b><small>{es?'celdas':'cells'}</small></div><div className={summary.wns_ns!==null&&summary.wns_ns<0?'metric-bad':'metric-good'}><span>WNS</span><b>{metric(summary.wns_ns,3)}</b><small>ns</small></div><div className={summary.tns_ns!==null&&summary.tns_ns<0?'metric-bad':'metric-good'}><span>TNS</span><b>{metric(summary.tns_ns,3)}</b><small>ns</small></div><div className={summary.drc_violations?'metric-bad':'metric-good'}><span>DRC</span><b>{summary.drc_violations??'—'}</b><small>{es?'violaciones':'violations'}</small></div></div>
-    <div className="floorplan-preview">{preview?<><div className="preview-heading"><span>{es?'VISTA PREVIA DEF':'DEF PREVIEW'}</span><small>{preview.width.toFixed(1)} × {preview.height.toFixed(1)} µm · {preview.components.length} {es?'colocaciones visibles':'visible placements'}</small></div><svg viewBox={`0 0 ${viewWidth} ${viewHeight}`} role="img" aria-label={es?'Vista previa del floorplan':'Floorplan preview'}><rect x={offsetX} y={offsetY} width={chipWidth} height={chipHeight} className="die-outline"/>{preview.components.map((component,index)=><rect key={`${component.name}-${index}`} x={offsetX+component.x*scale} y={offsetY+chipHeight-component.y*scale-2} width={Math.max(1.5,scale*.7)} height={Math.max(2,scale*1.3)} className="placed-cell"><title>{component.name}</title></rect>)}</svg></>:<div className="empty-preview"><b>{es?'DEF no disponible':'DEF unavailable'}</b><p>{es?'El resumen métrico permanece disponible; la vista aparecerá cuando LibreLane entregue el DEF final.':'Metrics remain available; the preview appears when LibreLane returns the final DEF.'}</p></div>}</div>
-  </section>
+  const es=locale==='es',def=artifacts.find(artifact=>artifact.name.toLowerCase().endsWith('.def')&&artifact.encoding!=='base64')
+  const layout=useMemo(()=>def?parseDefLayout(def.content):null,[def])
+  return <section className="analysis-view physical-dashboard"><div className="analysis-title"><div><span>RTL → GDSII</span><b>{es?'Resumen físico':'Physical summary'}</b></div><small>{summary.pdk} · {summary.scl}</small></div><div className="physical-metrics"><div><span>{es?'Área del dado':'Die area'}</span><b>{metric(summary.die_area_um2,0)}</b><small>µm²</small></div><div><span>{es?'Utilización objetivo':'Target utilization'}</span><b>{metric(summary.target_utilization_pct,0)}</b><small>%</small></div><div><span>{es?'Instancias':'Instances'}</span><b>{summary.cell_count??'—'}</b><small>{es?'celdas':'cells'}</small></div><div className={summary.wns_ns!==null&&summary.wns_ns<0?'metric-bad':'metric-good'}><span>WNS</span><b>{metric(summary.wns_ns,3)}</b><small>ns</small></div><div className={summary.tns_ns!==null&&summary.tns_ns<0?'metric-bad':'metric-good'}><span>TNS</span><b>{metric(summary.tns_ns,3)}</b><small>ns</small></div><div className={summary.drc_violations?'metric-bad':'metric-good'}><span>DRC</span><b>{summary.drc_violations??'—'}</b><small>{es?'violaciones':'violations'}</small></div></div><div className="floorplan-preview"><div className="preview-heading"><span>{es?'EXPLORADOR FÍSICO':'PHYSICAL EXPLORER'}</span><small>{es?'DEF real · celdas, densidad y enrutamiento por capa':'Real DEF · cells, density, and per-layer routing'}</small></div>{layout?<LayoutViewer layout={layout} es={es}/>:<div className="empty-preview"><b>{es?'DEF no disponible':'DEF unavailable'}</b><p>{es?'El resumen métrico permanece disponible; el visor aparecerá cuando LibreLane entregue el DEF final.':'Metrics remain available; the viewer appears when LibreLane returns the final DEF.'}</p></div>}</div><SignoffCenter summary={summary} layout={layout} es={es}/></section>
 }

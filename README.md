@@ -32,7 +32,7 @@ Open-source EDA and multiphysics tools are powerful, but they expose different i
 - Inspect automatically captured VCD waveforms with signal selection, zoom, and time-window navigation.
 - Download the synthesized Yosys JSON netlist and inspect complete console output.
 - Plot normalized ngspice `.print` results for DC, transient, AC, and noise analyses when those vectors are present in the testbench.
-- Run LibreLane Classic asynchronously for SKY130/GF180, inspect a DEF floorplan preview and timing/area/DRC summary, and export bounded final GDSII, DEF, LEF, netlist, timing, metrics, and log artifacts.
+- Run LibreLane Classic asynchronously for SKY130/GF180, explore real DEF placement, density, 2D routing and an interactive exploded 3D layer view, review timing/area/DRC evidence in the sign-off center, and export bounded final GDSII, DEF, LEF, netlist, timing, metrics, log, and JSON report artifacts.
 - Keep a bounded local execution history and compare implementation and simulation results.
 - Create and configure a 1D silicon PN junction.
 - Change doping, length, temperature, area, bias range, and mesh density.
@@ -114,7 +114,7 @@ The built-in solver is intentionally labeled **educational**. It produces transp
 
 ## Roadmap
 
-1. Add live per-stage LibreLane progress and a layer-aware GDS viewer beyond the current DEF placement preview.
+1. Add live per-stage LibreLane progress and extend the layer-aware DEF explorer with exact polygon rendering from GDSII.
 2. Extend ngspice normalization from `.print` tables to native rawfiles, PDK-defined PVT corners, mismatch models, and Xschem round trips.
 3. Execute a validated DEVSIM diode experiment and normalize its output.
 4. Add optional server-side project storage and Git synchronization while retaining local JSON portability.
