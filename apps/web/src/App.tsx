@@ -122,7 +122,7 @@ function App() {
       {depth >= 3 && result && <section className="technical"><div><p className="eyebrow">{es?'TRANSPARENCIA DEL MODELO':'MODEL TRANSPARENCY'}</p><h2>{es?'Nada importante permanece oculto.':'Nothing important is hidden.'}</h2></div><dl><div><dt>{es?'Modelo':'Model'}</dt><dd>{result.provenance.model}</dd></div><div><dt>{es?'Autoridad':'Authority'}</dt><dd>{result.provenance.authoritative ? (es?'Motor validado':'Validated engine') : (es?'Educativo — no apto para sign-off':'Educational — not sign-off')}</dd></div><div><dt>{es?'Huella de entrada':'Input fingerprint'}</dt><dd className="mono">{result.provenance.input_sha256.slice(0, 20)}…</dd></div></dl></section>}
       {depth >= 4 && <section className="raw"><div><p className="eyebrow">{es?'MANIFIESTO REPRODUCIBLE':'REPRODUCIBLE MANIFEST'}</p><h2>{es?'Entrada exacta del experimento':'Exact experiment input'}</h2></div><pre>{JSON.stringify(experiment, null, 2)}</pre></section>}
     </main></> : <DesignStudio locale={locale}/>}
-    <footer><span>{es?'CIENCIA ABIERTA · FIDELIDAD HONESTA · RESULTADOS REPRODUCIBLES':'OPEN SCIENCE · HONEST FIDELITY · REPRODUCIBLE RESULTS'}</span><a href="https://github.com/tono88/OpenSemiLab">GitHub ↗</a></footer>
+    <footer><span>{es?'DEL RTL AL SILICIO · FLUJOS EDA ABIERTOS · DISEÑO VERIFICABLE':'RTL TO SILICON · OPEN EDA FLOWS · VERIFIABLE DESIGN'}</span><a href="https://github.com/tono88/OpenSemiLab">GitHub ↗</a></footer>
   </div>
 }
 
