@@ -2,6 +2,8 @@ import { useState } from 'react'
 import type { PointerEvent } from 'react'
 import type { Series } from './types'
 
+export interface PlotOverlay {series:Series;color:string;label:string;dashed?:boolean}
+
 const FRAME={left:62,right:598,top:18,bottom:196}
 
 function extent(values:number[]):[number,number] {
@@ -27,13 +29,14 @@ function numberLabel(value:number) {
   return value.toFixed(3).replace(/0+$/,'').replace(/\.$/,'')
 }
 
-export function Plot({series,color='#45e6a6',locale='en'}:{series?:Series;color?:string;locale?:'es'|'en'}) {
+export function Plot({series,color='#45e6a6',locale='en',overlays=[]}:{series?:Series;color?:string;locale?:'es'|'en';overlays?:PlotOverlay[]}) {
   const [hoverIndex,setHoverIndex]=useState<number|null>(null)
   if(!series||!series.x.length||!series.y.length) return <div className="plot empty">{locale==='es'?'Ejecute el experimento para visualizar el resultado.':'Run the experiment to see this result.'}</div>
 
   const length=Math.min(series.x.length,series.y.length)
   const xValues=series.x.slice(0,length),yValues=series.y.slice(0,length)
-  const xDomain=extent(xValues),yDomain=extent(yValues)
+  const compared=[series,...overlays.map(overlay=>overlay.series)]
+  const xDomain=extent(compared.flatMap(item=>item.x)),yDomain=extent(compared.flatMap(item=>item.y))
   const xs=xValues.map(value=>position(value,xDomain,FRAME.left,FRAME.right))
   const ys=yValues.map(value=>position(value,yDomain,FRAME.bottom,FRAME.top))
   const points=xs.map((x,index)=>`${x},${ys[index]}`).join(' ')
@@ -60,9 +63,11 @@ export function Plot({series,color='#45e6a6',locale='en'}:{series?:Series;color?
       <line x1={FRAME.left} y1={FRAME.top} x2={FRAME.left} y2={FRAME.bottom} className="axis"/><line x1={FRAME.left} y1={FRAME.bottom} x2={FRAME.right} y2={FRAME.bottom} className="axis"/>
       <polygon points={areaPoints} fill={`url(#plot-fill-${series.name})`}/>
       <polyline points={points} fill="none" stroke={color} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round"/>
+      {overlays.map((overlay,index)=>{const count=Math.min(overlay.series.x.length,overlay.series.y.length);const overlayPoints=overlay.series.x.slice(0,count).map((value,point)=>`${position(value,xDomain,FRAME.left,FRAME.right)},${position(overlay.series.y[point],yDomain,FRAME.bottom,FRAME.top)}`).join(' ');return <polyline key={`${overlay.label}-${index}`} points={overlayPoints} fill="none" stroke={overlay.color} strokeWidth="1.7" strokeOpacity=".9" strokeDasharray={overlay.dashed?'5 4':undefined} strokeLinejoin="round"/>})}
       {selected&&<g className="plot-cursor"><line x1={selected.x} y1={FRAME.top} x2={selected.x} y2={FRAME.bottom}/><circle cx={selected.x} cy={selected.y} r="4" fill={color}/><g transform={`translate(${selected.x>450?selected.x-154:selected.x+10} ${Math.max(24,Math.min(142,selected.y-28))})`}><rect width="144" height="48" rx="2"/><text x="9" y="18">x {numberLabel(selected.xValue)} {series.x_unit}</text><text x="9" y="36">y {numberLabel(selected.yValue)} {series.y_unit}</text></g></g>}
       <text x={(FRAME.left+FRAME.right)/2} y="234" textAnchor="middle" className="axis-title">{series.x_label} ({series.x_unit})</text>
       <text x="13" y={(FRAME.top+FRAME.bottom)/2} textAnchor="middle" transform={`rotate(-90 13 ${(FRAME.top+FRAME.bottom)/2})`} className="axis-title">{series.y_label} ({series.y_unit})</text>
     </svg>
+    {overlays.length>0&&<div className="plot-legend"><span><i style={{background:color}}/>{series.name}</span>{overlays.map((overlay,index)=><span key={`${overlay.label}-${index}`}><i style={{background:overlay.color}}/>{overlay.label}</span>)}</div>}
   </div>
 }

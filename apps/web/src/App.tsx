@@ -3,6 +3,8 @@ import { simulate } from './api'
 import { Plot } from './Plot'
 import DesignStudio from './DesignStudio'
 import type { Experiment, Mode, SimulationResult } from './types'
+import StudyComparison from './StudyComparison'
+import type { StudyRun } from './StudyComparison'
 
 const MODES: Mode[] = ['Explore', 'Learn', 'Design', 'Advanced', 'Research']
 const defaults: Experiment = {
@@ -10,6 +12,17 @@ const defaults: Experiment = {
   device: { kind: 'pn_junction_1d', material: 'silicon', length_um: 2, area_um2: 100, acceptor_cm3: 1e16, donor_cm3: 1e16, temperature_k: 300 },
   sweep: { start_v: -1, stop_v: 0.8, points: 73 }, numerics: { mesh_points: 201, relative_tolerance: 1e-8, max_iterations: 80 },
 }
+
+function randomGenerator(seed:number) {
+  let state=seed>>>0
+  return ()=>{state=(1664525*state+1013904223)>>>0;return state/4294967296}
+}
+
+function gaussian(random:()=>number) {
+  return Math.sqrt(-2*Math.log(Math.max(random(),1e-12)))*Math.cos(2*Math.PI*random())
+}
+
+function boundedDoping(value:number) {return Math.max(1e12,Math.min(1e20,value))}
 
 function NumberField({ label, value, unit, onChange, step = 'any' }: { label: string; value: number; unit: string; onChange: (n: number) => void; step?: string }) {
   return <label className="field"><span>{label}</span><div><input type="number" value={value} step={step} onChange={e => onChange(Number(e.target.value))}/><b>{unit}</b></div></label>
@@ -24,6 +37,9 @@ function App() {
   const [result, setResult] = useState<SimulationResult | null>(null)
   const [activePlot, setActivePlot] = useState('potential')
   const [running, setRunning] = useState(false)
+  const [studyRunning,setStudyRunning]=useState<'corners'|'montecarlo'|''>('')
+  const [studyType,setStudyType]=useState<'corners'|'montecarlo'>('corners')
+  const [studyRuns,setStudyRuns]=useState<StudyRun[]>([])
   const [error, setError] = useState('')
   const depth = MODES.indexOf(mode)
   const modeLabels: Record<Mode,string> = es
@@ -36,6 +52,29 @@ function App() {
     setRunning(true); setError('')
     try { setResult(await simulate(experiment)) } catch (e) { setError(e instanceof Error ? e.message : (es?'La simulación falló':'Simulation failed')) }
     finally { setRunning(false) }
+  }
+
+  async function runStudy(type:'corners'|'montecarlo') {
+    setStudyRunning(type);setError('')
+    try {
+      const scenarios:{label:string;experiment:Experiment}[]=[]
+      if(type==='corners') {
+        const variants=[
+          ['Nominal',1,experiment.device.temperature_k],
+          ['Doping −10%',.9,experiment.device.temperature_k],
+          ['Doping +10%',1.1,experiment.device.temperature_k],
+          ['Cold',1,Math.max(150,experiment.device.temperature_k-50)],
+          ['Hot',1,Math.min(600,experiment.device.temperature_k+100)],
+        ] as const
+        variants.forEach(([label,factor,temperature])=>scenarios.push({label,experiment:{...experiment,name:`${experiment.name} · ${label}`,device:{...experiment.device,acceptor_cm3:boundedDoping(experiment.device.acceptor_cm3*factor),donor_cm3:boundedDoping(experiment.device.donor_cm3*factor),temperature_k:temperature}}}))
+      } else {
+        const random=randomGenerator(0x5eED2026)
+        for(let index=0;index<20;index+=1) scenarios.push({label:`MC ${String(index+1).padStart(2,'0')}`,experiment:{...experiment,name:`${experiment.name} · MC ${index+1}`,device:{...experiment.device,acceptor_cm3:boundedDoping(experiment.device.acceptor_cm3*Math.exp(.08*gaussian(random))),donor_cm3:boundedDoping(experiment.device.donor_cm3*Math.exp(.08*gaussian(random))),temperature_k:Math.max(150,Math.min(600,experiment.device.temperature_k+5*gaussian(random)))}}})
+      }
+      const results=await Promise.all(scenarios.map(async scenario=>({label:scenario.label,result:await simulate(scenario.experiment)})))
+      setStudyType(type);setStudyRuns(results)
+    } catch(reason) {setError(reason instanceof Error?reason.message:(es?'El estudio falló':'Study failed'))}
+    finally {setStudyRunning('')}
   }
   useEffect(() => { void run() }, [])
   const selected = useMemo(() => result?.series.find(s => s.name === activePlot), [result, activePlot])
@@ -73,9 +112,12 @@ function App() {
           <div className="metrics">{result?.metrics.map(metric => <div key={metric.label}><span>{metric.label}</span><b>{metric.value.toExponential(3)}</b><small>{metric.unit}</small></div>)}</div>
           <div className="plot-tabs">{[['potential',es?'Potencial':'Potential'],['electric_field',es?'Campo E':'E-field'],['charge_density',es?'Carga':'Charge'],['iv',es?'Curva I–V':'I–V curve']].map(([id,label]) => <button className={activePlot===id?'active':''} onClick={()=>setActivePlot(id)} key={id}>{label}</button>)}</div>
           <Plot series={selected} locale={locale}/>
+          {depth>=2&&<div className="study-actions"><div><span>{es?'ESTUDIOS PARAMÉTRICOS':'PARAMETRIC STUDIES'}</span><small>{es?'Corners educativos y Monte Carlo reproducible':'Educational corners and reproducible Monte Carlo'}</small></div><button disabled={!!studyRunning} onClick={()=>runStudy('corners')}>{studyRunning==='corners'?(es?'Calculando…':'Calculating…'):(es?'Ejecutar corners':'Run corners')}</button><button disabled={!!studyRunning} onClick={()=>runStudy('montecarlo')}>{studyRunning==='montecarlo'?(es?'Muestreando…':'Sampling…'):(es?'Monte Carlo ×20':'Monte Carlo ×20')}</button></div>}
           {depth >= 1 && result && <div className="explain"><span>{es?'POR QUÉ CAMBIA':'WHY IT MOVES'}</span><p>{result.explanations[activePlot === 'iv' ? 1 : 0]}</p></div>}
         </section>
       </section>
+
+      {studyRuns.length>0&&<StudyComparison runs={studyRuns} type={studyType} seriesName={activePlot} locale={locale}/>}
 
       {depth >= 3 && result && <section className="technical"><div><p className="eyebrow">{es?'TRANSPARENCIA DEL MODELO':'MODEL TRANSPARENCY'}</p><h2>{es?'Nada importante permanece oculto.':'Nothing important is hidden.'}</h2></div><dl><div><dt>{es?'Modelo':'Model'}</dt><dd>{result.provenance.model}</dd></div><div><dt>{es?'Autoridad':'Authority'}</dt><dd>{result.provenance.authoritative ? (es?'Motor validado':'Validated engine') : (es?'Educativo — no apto para sign-off':'Educational — not sign-off')}</dd></div><div><dt>{es?'Huella de entrada':'Input fingerprint'}</dt><dd className="mono">{result.provenance.input_sha256.slice(0, 20)}…</dd></div></dl></section>}
       {depth >= 4 && <section className="raw"><div><p className="eyebrow">{es?'MANIFIESTO REPRODUCIBLE':'REPRODUCIBLE MANIFEST'}</p><h2>{es?'Entrada exacta del experimento':'Exact experiment input'}</h2></div><pre>{JSON.stringify(experiment, null, 2)}</pre></section>}

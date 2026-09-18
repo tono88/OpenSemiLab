@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ProjectFile, StoredProject } from './projectStore'
+import type { Artifact, RunResult, RunSnapshot, SimulationData } from './eda-results'
+import SpiceViewer from './SpiceViewer'
+import WaveformViewer from './WaveformViewer'
+import PhysicalDashboard from './PhysicalDashboard'
+import RunHistory from './RunHistory'
 
-interface Artifact { name:string;media_type:string;content:string;encoding?:'utf-8'|'base64';size_bytes?:number }
-interface RunResult { job_id:string; engine:string; success:boolean; exit_code:number; output:string; duration_ms:number; artifacts:Artifact[];pdk?:string;scl?:string }
-
-type ArtifactKind='layout'|'netlist'|'timing'|'report'|'configuration'|'other'
+type ArtifactKind='layout'|'netlist'|'timing'|'waveform'|'report'|'configuration'|'other'
 
 function artifactKind(name:string):ArtifactKind {
   const lower=name.toLowerCase()
   if(['.gds','.def','.lef'].some(extension=>lower.endsWith(extension))) return 'layout'
   if(['.sdf','.sdc','.spef'].some(extension=>lower.endsWith(extension))) return 'timing'
+  if(lower.endsWith('.vcd')) return 'waveform'
   if(['.v','.sv'].some(extension=>lower.endsWith(extension))) return 'netlist'
   if(['.rpt','.log','.csv'].some(extension=>lower.endsWith(extension))) return 'report'
   if(lower.endsWith('.json')) return 'configuration'
@@ -26,10 +29,10 @@ function formatBytes(bytes:number|undefined) {
 function ArtifactBrowser({artifacts,locale,onDownload}:{artifacts:Artifact[];locale:'es'|'en';onDownload:(artifact:Artifact)=>void}) {
   const es=locale==='es'
   const [filter,setFilter]=useState<'all'|ArtifactKind>('all')
-  const kinds:ArtifactKind[]=['layout','netlist','timing','report','configuration','other']
+  const kinds:ArtifactKind[]=['layout','netlist','timing','waveform','report','configuration','other']
   const labels:Record<ArtifactKind,string>=es
-    ? {layout:'Layout',netlist:'Netlists',timing:'Temporización',report:'Reportes',configuration:'Configuración',other:'Otros'}
-    : {layout:'Layout',netlist:'Netlists',timing:'Timing',report:'Reports',configuration:'Configuration',other:'Other'}
+    ? {layout:'Layout',netlist:'Netlists',timing:'Temporización',waveform:'Ondas',report:'Reportes',configuration:'Configuración',other:'Otros'}
+    : {layout:'Layout',netlist:'Netlists',timing:'Timing',waveform:'Waveforms',report:'Reports',configuration:'Configuration',other:'Other'}
   const counts=Object.fromEntries(kinds.map(kind=>[kind,artifacts.filter(artifact=>artifactKind(artifact.name)===kind).length])) as Record<ArtifactKind,number>
   const effectiveFilter=filter==='all'||counts[filter]>0?filter:'all'
   const shown=effectiveFilter==='all'?artifacts:artifacts.filter(artifact=>artifactKind(artifact.name)===effectiveFilter)
@@ -43,6 +46,14 @@ function ArtifactBrowser({artifacts,locale,onDownload}:{artifacts:Artifact[];loc
       return <button className={`artifact-card kind-${kind}`} key={artifact.name} onClick={()=>onDownload(artifact)} title={`${es?'Descargar':'Download'} ${artifact.name}`}><span className="artifact-card-top"><i>{labels[kind]}</i><em>{extension}</em></span><strong>{filename}</strong><small>{path}</small><span className="artifact-card-meta"><i>{formatBytes(artifact.size_bytes)}</i><b aria-hidden="true">↓</b></span></button>
     })}</div>
   </section>
+}
+
+function compactSimulation(data:SimulationData|undefined):SimulationData|undefined {
+  if(!data) return undefined
+  return {...data,plots:data.plots.map(plot=>({...plot,series:plot.series.map(series=>{
+    const stride=Math.max(1,Math.ceil(series.x.length/1000))
+    return {...series,x:series.x.filter((_,index)=>index%stride===0),y:series.y.filter((_,index)=>index%stride===0)}
+  })}))}
 }
 
 const HDL_EXTENSIONS=['.sv','.v']
@@ -80,6 +91,11 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
   const [dieHeight,setDieHeight]=useState(Number(initialPhysical.die_height_um??120))
   const [utilization,setUtilization]=useState(Number(initialPhysical.core_utilization_pct??40))
   const [physicalStatus,setPhysicalStatus]=useState('')
+  const historyKey=`opensemilab.runs.${project.id}`
+  const [runHistory,setRunHistory]=useState<RunSnapshot[]>(()=>{
+    try {return JSON.parse(localStorage.getItem(historyKey)??'[]')}
+    catch {return []}
+  })
   const selected=project.files.find(file=>file.path===selectedPath)??project.files[0]
   const execution=useMemo(()=>{
     const fallback=EXECUTION_DEFAULTS[project.kind]??{}
@@ -109,6 +125,22 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
     } catch {setWorker('offline')}
   }
   useEffect(()=>{void refreshCapabilities()},[])
+  useEffect(()=>{
+    try {setRunHistory(JSON.parse(localStorage.getItem(historyKey)??'[]'))}
+    catch {setRunHistory([])}
+  },[historyKey])
+
+  function acceptResult(data:RunResult,action:string) {
+    setResult(data)
+    const snapshot:RunSnapshot={id:data.job_id,createdAt:new Date().toISOString(),action:data.action??action,engine:data.engine,success:data.success,duration_ms:data.duration_ms,simulation:compactSimulation(data.simulation),summary:data.summary}
+    setRunHistory(previous=>{
+      const next=[snapshot,...previous.filter(item=>item.id!==snapshot.id)].slice(0,8)
+      try {localStorage.setItem(historyKey,JSON.stringify(next))} catch { /* History is optional. */ }
+      return next
+    })
+  }
+
+  function clearHistory() {try {localStorage.removeItem(historyKey)} catch { /* Ignore unavailable storage. */ }setRunHistory([])}
 
   function updateFile(content:string) {
     onChange({...project,updatedAt:new Date().toISOString(),files:project.files.map(file=>file.path===selected.path?{...file,content}:file)})
@@ -144,7 +176,7 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
       if(action==='spice'&&!spiceEntry) throw new Error(es?'Este proyecto no contiene un netlist SPICE ejecutable.':'This project does not contain an executable SPICE netlist.')
       const top=action==='simulate'?execution.testbenchTop:execution.rtlTop
       const response=await fetch('/api/v1/eda/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,top:top??'top',entry:action==='spice'?spiceEntry?.path:undefined,sources})})
-      const data=await response.json();if(!response.ok) throw new Error(data.detail??'EDA execution failed');setResult(data)
+      const data=await response.json();if(!response.ok) throw new Error(data.detail??'EDA execution failed');acceptResult(data,action)
     } catch(reason) {setError(reason instanceof Error?reason.message:'EDA execution failed')}
     finally {setRunning('')}
   }
@@ -167,8 +199,8 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
         const statusResponse=await fetch(`/api/v1/eda/jobs/${created.job_id}`)
         const job=await statusResponse.json();if(!statusResponse.ok) throw new Error(job.detail??'Could not read physical job')
         setPhysicalStatus(`${es?'Trabajo':'Job'} ${created.job_id} · ${job.status}`)
-        if(job.status==='completed') {setResult(job.result);return}
-        if(job.status==='failed') {if(job.result)setResult(job.result);else throw new Error(job.error??'Physical implementation failed');return}
+        if(job.status==='completed') {acceptResult(job.result,'physical');return}
+        if(job.status==='failed') {if(job.result)acceptResult(job.result,'physical');else throw new Error(job.error??'Physical implementation failed');return}
       }
       throw new Error(es?'La implementación superó el tiempo de seguimiento de 30 minutos.':'Implementation exceeded the 30-minute tracking window.')
     } catch(reason) {setError(reason instanceof Error?reason.message:'Physical implementation failed')}
@@ -185,6 +217,8 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
     const url=URL.createObjectURL(new Blob([payload],{type:artifact.media_type}));const link=document.createElement('a');link.href=url;link.download=artifact.name.split('/').pop()??artifact.name;link.click();URL.revokeObjectURL(url)
   }
 
+  const waveform=result?.artifacts.find(artifact=>artifact.name.toLowerCase().endsWith('.vcd')&&artifact.encoding!=='base64')
+
   return <section className="project-workspace">
     <div className="project-toolbar"><div><span>{es?'PROYECTO ACTIVO':'ACTIVE PROJECT'}</span><h2>{project.name}</h2><small>{project.kind} · {project.pdk} · {es?'guardado automático en este navegador':'autosaved in this browser'}</small></div><div><button onClick={exportProject}>{es?'Exportar':'Export'}</button><button onClick={onClose}>{es?'Cerrar':'Close'}</button></div></div>
     <div className={`workspace-worker ${worker}`}><i/>{worker==='online'?(es?'IIC-OSIC listo para ejecutar':'IIC-OSIC ready to run'):worker==='degraded'?(es?'Worker conectado; algunas herramientas no están disponibles':'Worker connected; some tools are unavailable'):worker==='checking'?(es?'Comprobando herramientas…':'Checking tools…'):(es?'Worker desconectado':'Worker offline')}<button onClick={refreshCapabilities}>{es?'Comprobar':'Check'}</button></div>
@@ -195,6 +229,10 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
     {(rtlSources.length||spiceSources.length)?<div className="execution-panel"><div><b>{es?'EJECUCIÓN DEL PROYECTO':'PROJECT EXECUTION'}</b><small>{execution.rtlTop?`RTL top: ${execution.rtlTop}`:''}{execution.spiceEntry?` · SPICE: ${execution.spiceEntry}`:''}</small></div><div className="project-actions">{rtlSources.length>0&&<button disabled={!!running||worker==='offline'||!(tools.verible_lint?.available||tools.verilator?.available)} onClick={()=>run('lint')}>01 · {running==='lint'?(es?'Ejecutando…':'Running…'):(es?'Analizar RTL':'Lint RTL')}<small>{tools.verible_lint?.available?'Verible':'Verilator'}</small></button>}{testbenches.length>0&&<button disabled={!!running||worker==='offline'||!(tools.iverilog?.available&&tools.vvp?.available)} onClick={()=>run('simulate')}>02 · {running==='simulate'?(es?'Ejecutando…':'Running…'):(es?'Simular RTL':'Simulate RTL')}<small>Icarus Verilog</small></button>}{rtlSources.length>0&&<button disabled={!!running||worker==='offline'||!tools.yosys?.available} onClick={()=>run('synthesize')}>03 · {running==='synthesize'?(es?'Ejecutando…':'Running…'):(es?'Sintetizar':'Synthesize')}<small>Yosys</small></button>}{spiceEntry&&<button disabled={!!running||worker==='offline'||!tools.ngspice?.available} onClick={()=>run('spice')}>04 · {running==='spice'?(es?'Ejecutando…':'Running…'):(es?'Simular SPICE':'Simulate SPICE')}<small>ngspice</small></button>}</div></div>:<div className="adapter-message">{es?'Este proyecto aún no contiene archivos ejecutables.':'This project does not contain executable files yet.'}</div>}
     {rtlSources.length>0&&['sky130A','gf180mcuD'].includes(project.pdk)&&<div className="physical-panel"><div className="physical-heading"><span>05</span><div><b>{es?'IMPLEMENTACIÓN FÍSICA RTL → GDSII':'PHYSICAL IMPLEMENTATION RTL → GDSII'}</b><small>{es?'LibreLane coordina Yosys, OpenROAD, OpenSTA y verificación física.':'LibreLane orchestrates Yosys, OpenROAD, OpenSTA and physical verification.'}</small></div></div><div className="physical-steps">{['Synthesis','Floorplan','Placement','CTS','Routing','Sign-off'].map((stage,index)=><i className={running==='physical'?'active':result?.engine==='LibreLane/OpenROAD'&&result.success?'done':''} key={stage}><span>{String(index+1).padStart(2,'0')}</span>{stage}</i>)}</div><div className="physical-config"><label>{es?'Puerto de reloj':'Clock port'}<input value={clockPort} onChange={event=>setClockPort(event.target.value)}/></label><label>{es?'Período (ns)':'Period (ns)'}<input type="number" min="0.1" max="1000" step="0.1" value={clockPeriod} onChange={event=>setClockPeriod(Number(event.target.value))}/></label><label>{es?'Ancho del dado (µm)':'Die width (µm)'}<input type="number" min="30" max="5000" value={dieWidth} onChange={event=>setDieWidth(Number(event.target.value))}/></label><label>{es?'Alto del dado (µm)':'Die height (µm)'}<input type="number" min="30" max="5000" value={dieHeight} onChange={event=>setDieHeight(Number(event.target.value))}/></label><label>{es?'Utilización del núcleo (%)':'Core utilization (%)'}<input type="number" min="5" max="80" value={utilization} onChange={event=>setUtilization(Number(event.target.value))}/></label><button disabled={!!running||worker==='offline'||!tools.librelane?.available} onClick={runPhysical}>{running==='physical'?(es?'Implementando…':'Implementing…'):(es?'Ejecutar RTL → GDSII':'Run RTL → GDSII')}<small>{tools.librelane?.available?'LibreLane Classic':(es?'No disponible':'Unavailable')}</small></button></div>{physicalStatus&&<p className="physical-status">{physicalStatus}</p>}</div>}
     {error&&<p className="error">{error}</p>}
+    {result?.engine==='ngspice'&&result.simulation&&<SpiceViewer data={result.simulation} locale={locale}/>}
+    {waveform&&<WaveformViewer content={waveform.content} locale={locale}/>}
+    {result?.summary&&<PhysicalDashboard summary={result.summary} artifacts={result.artifacts} locale={locale}/>}
     {result&&<div className="console"><div className="console-header"><span>{result.engine} · {result.duration_ms} ms{result.pdk?` · ${result.pdk}`:''}{result.scl?` / ${result.scl}`:''}</span><b className={result.success?'success':'failed'}>{result.success?(es?'CORRECTO':'PASSED'):(es?'FALLÓ':'FAILED')} · EXIT {result.exit_code}</b></div><details className="console-output" open={!result.success}><summary>{es?'Registro de ejecución':'Execution log'} <span>{result.output?`${result.output.split('\n').length} ${es?'líneas':'lines'}`:(es?'sin salida':'no output')}</span></summary><pre>{result.output||(es?'La herramienta terminó sin salida de consola.':'The tool completed without console output.')}</pre></details>{result.artifacts.length>0&&<ArtifactBrowser artifacts={result.artifacts} locale={locale} onDownload={downloadArtifact}/>}</div>}
+    <RunHistory runs={runHistory} locale={locale} onClear={clearHistory}/>
   </section>
 }

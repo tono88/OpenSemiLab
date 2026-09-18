@@ -5,6 +5,9 @@
 .plot-cursor > line { stroke: #dff8ee55; stroke-width: 1; stroke-dasharray: 3 3; }
 .plot-cursor > g rect { fill: #07130f; stroke: #45e6a680; }
 .plot-cursor > g text { fill: #b9ecd9; font: 9px DM Mono; }
+.plot-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 0 8px 8px 62px; }
+.plot-legend span { display: flex; align-items: center; gap: 5px; color: #66877a; font: 8px DM Mono; }
+.plot-legend i { display: block; width: 12px; height: 2px; }
 
 @media (max-width: 560px) {
   .plot { min-height: 220px; }

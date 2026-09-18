@@ -29,12 +29,16 @@ Open-source EDA and multiphysics tools are powerful, but they expose different i
 - Select SKY130, GF180MCU, IHP SG13G2, or IHP SG13CMOS5L and generate a reproducible staged manifest.
 - Map each stage to relevant IIC-OSIC-TOOLS engines while clearly distinguishing connected and pending adapters.
 - Edit SystemVerilog in the browser and run Verible/Verilator lint, Icarus Verilog simulation, and Yosys synthesis in IIC-OSIC-TOOLS.
+- Inspect automatically captured VCD waveforms with signal selection, zoom, and time-window navigation.
 - Download the synthesized Yosys JSON netlist and inspect complete console output.
-- Run LibreLane Classic asynchronously for SKY130/GF180 and export bounded final GDSII, DEF, LEF, netlist, timing, metrics, and log artifacts.
+- Plot normalized ngspice `.print` results for DC, transient, AC, and noise analyses when those vectors are present in the testbench.
+- Run LibreLane Classic asynchronously for SKY130/GF180, inspect a DEF floorplan preview and timing/area/DRC summary, and export bounded final GDSII, DEF, LEF, netlist, timing, metrics, and log artifacts.
+- Keep a bounded local execution history and compare implementation and simulation results.
 - Create and configure a 1D silicon PN junction.
 - Change doping, length, temperature, area, bias range, and mesh density.
 - Run a deterministic drift-diffusion-inspired educational approximation.
 - Inspect electrostatic potential, electric field, charge density, and I–V response.
+- Run reproducible educational parameter corners and a 20-sample Monte Carlo study with mean and min–max envelopes.
 - Switch between five depth modes without changing the underlying experiment.
 - Query engine capabilities and export a self-describing simulation result.
 - Select `devsim` explicitly; the API returns a clear capability error until the optional engine is installed.
@@ -88,6 +92,7 @@ npm run dev
 ### Tests
 
 ```bash
+cd services/eda-worker && python -m unittest discover -s tests -v
 cd services/api && pytest
 cd apps/web && npm run build
 ```
@@ -109,8 +114,8 @@ The built-in solver is intentionally labeled **educational**. It produces transp
 
 ## Roadmap
 
-1. Add per-stage LibreLane progress, visual floorplan/layout inspection, and timing/area metric dashboards.
-2. Extend the connected ngspice runner with normalized waveform plots, sweeps, corners, and Xschem round trips.
+1. Add live per-stage LibreLane progress and a layer-aware GDS viewer beyond the current DEF placement preview.
+2. Extend ngspice normalization from `.print` tables to native rawfiles, PDK-defined PVT corners, mismatch models, and Xschem round trips.
 3. Execute a validated DEVSIM diode experiment and normalize its output.
 4. Add optional server-side project storage and Git synchronization while retaining local JSON portability.
 5. Add MOS capacitor and MOSFET experiment templates.

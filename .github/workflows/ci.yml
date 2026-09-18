@@ -3,6 +3,14 @@ on:
   push:
   pull_request:
 jobs:
+  worker:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: services/eda-worker } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: python -m unittest discover -s tests -v
   api:
     runs-on: ubuntu-latest
     defaults: { run: { working-directory: services/api } }

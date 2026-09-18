@@ -104,6 +104,7 @@
 .artifact-card:hover { border-color: #45e6a680; background: #0e241b; transform: translateY(-1px); }
 .artifact-card.kind-layout { border-top-color: #45e6a6; }
 .artifact-card.kind-timing { border-top-color: #e8bd69; }
+.artifact-card.kind-waveform { border-top-color: #f08cc6; }
 .artifact-card.kind-netlist { border-top-color: #73b9e6; }
 .artifact-card.kind-report { border-top-color: #b68ae6; }
 .artifact-card.kind-configuration { border-top-color: #78978b; }

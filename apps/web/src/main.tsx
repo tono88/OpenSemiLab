@@ -9,6 +9,7 @@ import './worker-health.css'
 import './language.css'
 import './project-workspace.css'
 import './result-artifacts.css'
+import './eda-visualizations.css'
 import './library-cards.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>)

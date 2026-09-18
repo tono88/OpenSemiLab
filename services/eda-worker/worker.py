@@ -29,6 +29,7 @@ PHYSICAL_TIMEOUT_SECONDS = int(os.getenv("OPENSEMILAB_PHYSICAL_TIMEOUT", "1800")
 SAFE_PATH_COMPONENT = re.compile(r"^[A-Za-z0-9_.-]+$")
 MAX_ARTIFACT_BYTES = 20_000_000
 MAX_ARTIFACT_BUNDLE_BYTES = 40_000_000
+MAX_WAVEFORM_BYTES = 5_000_000
 JOBS: dict[str, dict[str, Any]] = {}
 JOBS_LOCK = threading.Lock()
 
@@ -177,6 +178,127 @@ def physical_artifacts(job_dir: Path) -> list[dict[str, Any]]:
     return artifacts
 
 
+def text_artifact(name: str, content: str, media_type: str = "text/plain") -> dict[str, Any]:
+    return {
+        "name": name,
+        "media_type": media_type,
+        "encoding": "utf-8",
+        "content": content,
+        "size_bytes": len(content.encode()),
+    }
+
+
+def parse_numeric(token: str) -> float | None:
+    try:
+        if "," in token:
+            real, imaginary = token.strip("(),").split(",", 1)
+            return (float(real) ** 2 + float(imaginary) ** 2) ** 0.5
+        return float(token)
+    except (ValueError, OverflowError):
+        return None
+
+
+def spice_axis(name: str) -> tuple[str, str]:
+    lower = name.lower()
+    if "time" in lower:
+        return "Time", "s"
+    if "freq" in lower:
+        return "Frequency", "Hz"
+    if "sweep" in lower or "voltage" in lower:
+        return "Sweep", "V"
+    if "temp" in lower:
+        return "Temperature", "°C"
+    return name, ""
+
+
+def spice_unit(name: str) -> str:
+    lower = name.lower()
+    if lower.startswith("v(") or "voltage" in lower:
+        return "V"
+    if lower.startswith("i(") or lower.startswith("@") or "current" in lower:
+        return "A"
+    return ""
+
+
+def parse_spice_tables(log: str) -> dict[str, Any]:
+    """Convert ngspice .print tables into portable chart series."""
+    lines = log.splitlines()
+    plots: list[dict[str, Any]] = []
+    index = 0
+    while index < len(lines):
+        header = lines[index].strip().split()
+        if len(header) < 3 or header[0].lower() != "index":
+            index += 1
+            continue
+        rows: list[list[float]] = []
+        cursor = index + 1
+        while cursor < len(lines):
+            tokens = lines[cursor].strip().split()
+            if not tokens or set("".join(tokens)) <= {"-"}:
+                cursor += 1
+                continue
+            if not tokens[0].isdigit():
+                break
+            values = [parse_numeric(token) for token in tokens[1:len(header)]]
+            if len(values) == len(header) - 1 and all(value is not None for value in values):
+                rows.append([float(value) for value in values if value is not None])
+            cursor += 1
+        if rows:
+            x_name = header[1]
+            x_label, x_unit = spice_axis(x_name)
+            series = []
+            for column, name in enumerate(header[2:], start=1):
+                series.append({
+                    "name": name,
+                    "x_label": x_label,
+                    "x_unit": x_unit,
+                    "y_label": name,
+                    "y_unit": spice_unit(name),
+                    "x": [row[0] for row in rows],
+                    "y": [row[column] for row in rows],
+                })
+            plots.append({"name": f"ngspice table {len(plots) + 1}", "analysis": x_name, "series": series})
+        index = max(cursor, index + 1)
+    return {"schema": "opensemilab.simulation/v1", "engine": "ngspice", "plots": plots}
+
+
+def physical_summary(job_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "schema": "opensemilab.physical-summary/v1",
+        "pdk": config["PDK"],
+        "scl": config["STD_CELL_LIBRARY"],
+        "die_area_um2": float(config["DIE_AREA"][2]) * float(config["DIE_AREA"][3]),
+        "target_utilization_pct": float(config["FP_CORE_UTIL"]),
+        "cell_count": None,
+        "wns_ns": None,
+        "tns_ns": None,
+        "drc_violations": None,
+    }
+    text_files = [path for root in (job_dir / "final", job_dir / "runs") if root.exists() for path in root.rglob("*") if path.is_file() and path.suffix.lower() in {".def", ".rpt", ".log", ".csv", ".json"}]
+    patterns = {
+        "wns_ns": [r"timing__setup__wns[\s,:=]+(-?[0-9.eE+]+)", r"\bWNS\b[^-+0-9]*(-?[0-9.eE+]+)"],
+        "tns_ns": [r"timing__setup__tns[\s,:=]+(-?[0-9.eE+]+)", r"\bTNS\b[^-+0-9]*(-?[0-9.eE+]+)"],
+        "drc_violations": [r"route__drc_errors[\s,:=]+([0-9]+)", r"drc[^\n]{0,30}(?:violations|errors)[^0-9]*([0-9]+)"],
+    }
+    for path in text_files:
+        if path.stat().st_size > 5_000_000:
+            continue
+        content = path.read_text(encoding="utf-8", errors="replace")
+        if summary["cell_count"] is None and path.suffix.lower() == ".def":
+            match = re.search(r"(?im)^COMPONENTS\s+(\d+)\s*;", content)
+            if match:
+                summary["cell_count"] = int(match.group(1))
+        for key, expressions in patterns.items():
+            if summary[key] is not None:
+                continue
+            for expression in expressions:
+                match = re.search(expression, content, re.IGNORECASE)
+                if match:
+                    summary[key] = int(match.group(1)) if key == "drc_violations" else float(match.group(1))
+                    break
+    return summary
+
+
 def execute(payload: dict[str, Any]) -> dict[str, Any]:
     action = payload.get("action")
     if action not in {"lint", "simulate", "synthesize", "spice", "physical"}:
@@ -255,6 +377,9 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
                 env_overrides={"PDK": pdk, "STD_CELL_LIBRARY": scl},
             )
             artifacts = physical_artifacts(job_dir)
+            summary = physical_summary(job_dir, config)
+            summary_content = json.dumps(summary, indent=2) + "\n"
+            artifacts.insert(0, text_artifact("physical-summary.json", summary_content, "application/json"))
             artifacts.insert(0, {"name": "physical-config.json", "media_type": "application/json", "encoding": "utf-8", "content": json.dumps(config, indent=2) + "\n", "size_bytes": len(json.dumps(config))})
             return {
                 "job_id": job_id,
@@ -262,6 +387,7 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
                 "engine": "LibreLane/OpenROAD",
                 "pdk": pdk,
                 "scl": scl,
+                "summary": summary,
                 "success": result["exit_code"] == 0,
                 **result,
                 "artifacts": artifacts,
@@ -278,8 +404,12 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
             result["output"] = log[-MAX_OUTPUT:]
             artifacts = []
             if log_path.exists():
-                artifacts.append({"name": "spice.log", "media_type": "text/plain", "content": log[-MAX_OUTPUT:]})
-            return {"job_id": job_id, "action": action, "engine": "ngspice", "success": result["exit_code"] == 0, **result, "artifacts": artifacts}
+                artifacts.append(text_artifact("spice.log", log[-MAX_OUTPUT:]))
+            simulation_data = parse_spice_tables(log)
+            if simulation_data["plots"]:
+                data_content = json.dumps(simulation_data, separators=(",", ":"))
+                artifacts.insert(0, text_artifact("simulation-data.json", data_content, "application/json"))
+            return {"job_id": job_id, "action": action, "engine": "ngspice", "success": result["exit_code"] == 0, **result, "simulation": simulation_data, "artifacts": artifacts}
         if action == "lint":
             binary = TOOL_BINARIES["verible_lint"]
             if shutil.which(binary):
@@ -293,14 +423,32 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
         elif action == "simulate":
             if not shutil.which(TOOL_BINARIES["iverilog"]) or not shutil.which(TOOL_BINARIES["vvp"]):
                 raise RuntimeError("Icarus Verilog (iverilog/vvp) is unavailable after IIC-OSIC environment initialization")
-            command = [TOOL_BINARIES["iverilog"], "-g2012", "-s", top, "-o", "simulation.vvp", *source_names]
+            roots = ["-s", top]
+            if not any("$dumpfile" in content for content in sources.values()):
+                probe_name = "__opensemilab_wave_probe"
+                probe_file = "__opensemilab_wave_probe.sv"
+                (job_dir / probe_file).write_text(
+                    f'module {probe_name}; initial begin $dumpfile("waveform.vcd"); $dumpvars(0, {top}); end endmodule\n',
+                    encoding="utf-8",
+                )
+                roots.extend(["-s", probe_name])
+                source_names.append(probe_file)
+            command = [TOOL_BINARIES["iverilog"], "-g2012", *roots, "-o", "simulation.vvp", *source_names]
             compile_result = run_command(command, job_dir)
             if compile_result["exit_code"] != 0:
                 return {"job_id": job_id, "action": action, "engine": "iverilog", "success": False, **compile_result, "artifacts": []}
             result = run_command([TOOL_BINARIES["vvp"], "simulation.vvp"], job_dir)
             result["output"] = "COMPILE\n" + compile_result["output"] + "\nSIMULATION\n" + result["output"]
             result["duration_ms"] += compile_result["duration_ms"]
-            return {"job_id": job_id, "action": action, "engine": "iverilog/vvp", "success": result["exit_code"] == 0, **result, "artifacts": []}
+            artifacts = []
+            vcd_files = sorted(job_dir.rglob("*.vcd"), key=lambda path: path.stat().st_size)
+            if vcd_files:
+                waveform = vcd_files[0]
+                if waveform.stat().st_size <= MAX_WAVEFORM_BYTES:
+                    artifacts.append(text_artifact("waveform.vcd", waveform.read_text(encoding="utf-8", errors="replace"), "text/x-vcd"))
+                else:
+                    result["output"] += f"\nWaveform omitted because it exceeds {MAX_WAVEFORM_BYTES // 1_000_000} MB."
+            return {"job_id": job_id, "action": action, "engine": "iverilog/vvp", "success": result["exit_code"] == 0, **result, "artifacts": artifacts}
         else:
             if not shutil.which(TOOL_BINARIES["yosys"]):
                 raise RuntimeError("Yosys is unavailable after IIC-OSIC environment initialization")
