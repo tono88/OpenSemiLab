@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -13,10 +13,12 @@ class PhysicalOptions(BaseModel):
 
 
 class EdaRunRequest(BaseModel):
-    action: Literal["lint", "simulate", "synthesize", "spice", "vhdl", "physical"]
+    action: Literal["lint", "simulate", "synthesize", "spice", "vhdl", "physical", "formal", "fpga", "xyce", "openems", "xschem", "gds3d", "cace"]
     top: str = Field("top", pattern=r"^[A-Za-z_][A-Za-z0-9_$]*$")
     entry: str | None = None
     physical: PhysicalOptions | None = None
+    adapter: dict[str, Any] | None = None
+    encodings: dict[str, Literal["utf-8", "base64"]] | None = None
     sources: dict[str, str]
 
     @model_validator(mode="after")
@@ -30,6 +32,6 @@ class EdaRunRequest(BaseModel):
     def source_limits(cls, value: dict[str, str]) -> dict[str, str]:
         if not value:
             raise ValueError("at least one source file is required")
-        if sum(len(content.encode()) for content in value.values()) > 256_000:
-            raise ValueError("source bundle exceeds 256 KB")
+        if sum(len(content.encode()) for content in value.values()) > 3_000_000:
+            raise ValueError("source bundle exceeds 3 MB")
         return value

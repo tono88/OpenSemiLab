@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from opensemilab_api.main import app
+from opensemilab_api.eda import EdaRunRequest
 
 client = TestClient(app)
 
@@ -87,3 +88,9 @@ def test_physical_job_requires_bounded_options():
         "physical": {"pdk": "ihp-sg13g2", "clock_port": "clk"}
     })
     assert unsupported.status_code == 422
+
+
+def test_specialized_eda_actions_share_the_validated_contract():
+    for action in ("formal", "fpga", "xyce", "openems", "xschem", "gds3d", "cace"):
+        request = EdaRunRequest(action=action, top="top", sources={"input.txt": "bounded"}, adapter={"depth": 20})
+        assert request.action == action

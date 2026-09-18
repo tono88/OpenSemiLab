@@ -1,6 +1,7 @@
 import importlib.util
 import tempfile
 import unittest
+from base64 import b64encode
 from pathlib import Path
 from unittest.mock import patch
 
@@ -19,7 +20,9 @@ class WorkerResultTests(unittest.TestCase):
         integrations = {item["tool"]: item["level"] for item in data["integrations"]}
         self.assertEqual(integrations["ghdl"], "direct")
         self.assertEqual(integrations["openroad"], "orchestrated")
-        self.assertEqual(integrations["openems"], "available")
+        self.assertEqual(integrations["openems"], "direct")
+        self.assertEqual(integrations["sby"], "direct")
+        self.assertTrue(data["actions"]["gds3d"])
 
     def test_ngspice_print_table_becomes_chart_series(self):
         log = """
@@ -107,6 +110,82 @@ Index   v-sweep   v(a)       v(y)
         self.assertTrue(result["success"])
         self.assertEqual([next(flag for flag in ("-a", "-e", "-r") if flag in command) for command in commands], ["-a", "-e", "-r"])
         self.assertEqual(result["artifacts"][0]["name"], "waveform.vcd")
+
+    def test_formal_adapter_generates_bounded_sby_configuration(self):
+        payload = {"action": "formal", "top": "top", "adapter": {"depth": 32}, "sources": {"rtl/top.sv": "module top; assert property (1); endmodule\n"}}
+        with tempfile.TemporaryDirectory() as temporary:
+            original_root = worker.WORK_ROOT
+            worker.WORK_ROOT = Path(temporary)
+            captured = {}
+            def fake_run(command, cwd, timeout_seconds=worker.TIMEOUT_SECONDS, env_overrides=None):
+                captured["command"] = command
+                captured["config"] = (cwd / "opensemilab.sby").read_text(encoding="utf-8")
+                (cwd / "opensemilab" / "status").parent.mkdir()
+                (cwd / "opensemilab" / "status").write_text("PASS\n", encoding="utf-8")
+                return {"exit_code": 0, "output": "PASS", "duration_ms": 1, "timed_out": False}
+            try:
+                with patch.object(worker.shutil, "which", return_value="/usr/bin/sby"), patch.object(worker, "run_command", side_effect=fake_run):
+                    result = worker.execute(payload)
+            finally:
+                worker.WORK_ROOT = original_root
+        self.assertTrue(result["success"])
+        self.assertEqual(captured["command"][1:], ["-f", "opensemilab.sby"])
+        self.assertIn("depth 32", captured["config"])
+
+    def test_fpga_adapter_runs_yosys_then_nextpnr_and_collects_asc(self):
+        payload = {"action": "fpga", "top": "top", "adapter": {"device": "up5k", "package": "sg48", "frequency_mhz": 24}, "sources": {"rtl/top.sv": "module top(output logic led); assign led=1; endmodule\n", "constraints/pins.pcf": "set_io led 39\n"}}
+        with tempfile.TemporaryDirectory() as temporary:
+            original_root = worker.WORK_ROOT
+            worker.WORK_ROOT = Path(temporary)
+            commands = []
+            def fake_run(command, cwd, timeout_seconds=worker.TIMEOUT_SECONDS, env_overrides=None):
+                commands.append(command)
+                if command[0] == worker.TOOL_BINARIES["yosys"]:
+                    (cwd / "netlist.json").write_text("{}", encoding="utf-8")
+                else:
+                    (cwd / "design.asc").write_text(".comment OpenSemiLab\n", encoding="utf-8")
+                return {"exit_code": 0, "output": "ok", "duration_ms": 1, "timed_out": False}
+            try:
+                with patch.object(worker.shutil, "which", return_value="/usr/bin/tool"), patch.object(worker, "run_command", side_effect=fake_run):
+                    result = worker.execute(payload)
+            finally:
+                worker.WORK_ROOT = original_root
+        self.assertTrue(result["success"])
+        self.assertEqual(len(commands), 2)
+        self.assertIn("--up5k", commands[1])
+        self.assertIn("constraints/pins.pcf", commands[1])
+        self.assertTrue(any(artifact["name"] == "design.asc" for artifact in result["artifacts"]))
+
+    def test_specialized_adapters_use_named_bounded_commands(self):
+        cases = [
+            ("xyce", {"entry": "tb.cir", "sources": {"tb.cir": "V1 1 0 1\n.end\n"}}, "Xyce"),
+            ("openems", {"entry": "model.xml", "sources": {"model.xml": "<openEMS/>"}}, "openEMS"),
+            ("xschem", {"entry": "design.sch", "sources": {"design.sch": "v {xschem version=3.4.0}"}}, "Xschem"),
+            ("cace", {"entry": "datasheet.yaml", "sources": {"datasheet.yaml": "name: demo\n"}}, "CACE"),
+            ("gds3d", {"entry": "layout.gds", "encodings": {"layout.gds": "base64"}, "sources": {"layout.gds": b64encode(b"GDSII").decode()}}, "GDS3D"),
+        ]
+        for action, fields, engine in cases:
+            with self.subTest(action=action), tempfile.TemporaryDirectory() as temporary:
+                original_root = worker.WORK_ROOT
+                worker.WORK_ROOT = Path(temporary)
+                command_seen = []
+                def fake_run(command, cwd, timeout_seconds=worker.TIMEOUT_SECONDS, env_overrides=None):
+                    command_seen.append(command)
+                    if action == "xyce":
+                        (cwd / "xyce.log").write_text("Xyce ok", encoding="utf-8")
+                        (cwd / "tb.prn").write_text("TIME V(out) INDEX\n0 0 0\n1e-9 1.2 1\n", encoding="utf-8")
+                    if action == "xschem": (cwd / "netlist" / "generated.spice").write_text(".end\n", encoding="utf-8")
+                    return {"exit_code": 124 if action == "gds3d" else 0, "output": "viewer active" if action == "gds3d" else "ok", "duration_ms": 1, "timed_out": action == "gds3d"}
+                try:
+                    with patch.object(worker.shutil, "which", side_effect=lambda binary: None if binary == "xvfb-run" else f"/usr/bin/{binary}"), patch.object(worker, "run_command", side_effect=fake_run):
+                        result = worker.execute({"action": action, "top": "top", **fields})
+                finally:
+                    worker.WORK_ROOT = original_root
+                self.assertTrue(result["success"])
+                self.assertEqual(result["engine"], engine)
+                self.assertTrue(command_seen)
+                if action == "xyce":
+                    self.assertEqual(result["simulation"]["plots"][0]["series"][0]["y"], [0.0, 1.2])
 
 
 if __name__ == "__main__":

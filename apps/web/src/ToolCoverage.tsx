@@ -3,7 +3,7 @@ export interface ToolIntegration {tool:string;level:'direct'|'orchestrated'|'ava
 const LABELS={
   direct:{es:'Conectada',en:'Connected'},
   orchestrated:{es:'Orquestada',en:'Orchestrated'},
-  available:{es:'Próximo adaptador',en:'Next adapter'},
+  available:{es:'Detectada',en:'Detected'},
 }
 
 export default function ToolCoverage({integrations,locale}:{integrations:ToolIntegration[];locale:'es'|'en'}) {

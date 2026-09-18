@@ -68,11 +68,23 @@ IIC-OSIC-TOOLS is a broad distribution rather than one engine. OpenSemiLab repor
 
 | Level | Current tools | Meaning |
 |---|---|---|
-| Direct | Verible/Verilator, Icarus/VVP, GHDL, Yosys, ngspice, LibreLane | Invoked by a bounded worker workflow with normalized results. |
+| Direct | Verible/Verilator, Icarus/VVP, GHDL, Yosys, ngspice, LibreLane, SymbiYosys, nextpnr, Xyce, openEMS, Xschem, GDS3D, CACE | Invoked by a bounded worker workflow with portable results and artifacts. |
 | Orchestrated | OpenROAD, OpenSTA, KLayout, Magic, Netgen | Invoked as part of the LibreLane physical flow. |
-| Detected / next adapter | Xyce, openEMS, Xschem, GTKWave, SymbiYosys, nextpnr, gds3d, CACE | Availability is reported honestly; a safe web workflow is not yet exposed. |
+| Browser-native companion | GTKWave replacement, DEF/GDS physical explorer | Waveforms and physical layers are rendered interactively without exposing a remote desktop. |
 
 GUI editors, Python libraries, PDK managers and highly specialized utilities remain available in the underlying image but are not mislabeled as web integrations.
+
+The specialized adapter cards infer their entry point from project files and remain disabled until a compatible input exists:
+
+| Workflow | Accepted project input | Portable result |
+|---|---|---|
+| SymbiYosys | RTL plus optional `.sby` | proof logs, traces, generated bounded config |
+| nextpnr iCE40 | RTL plus optional `.pcf` | synthesized JSON and routed `.asc` |
+| Xyce | `.cir` / `.spice` | logs, raw tables, normalized animated plots |
+| openEMS | solver `.xml` | field, CSV, VTK and Touchstone files |
+| Xschem | `.sch` with project symbols/models | headless SPICE netlist |
+| CACE | a file named `cace*.yaml` or `datasheet*.yaml/json` | characterization reports, tables and plots |
+| GDS3D | GDSII from the latest LibreLane run | bounded native import validation; interactive layers remain in the browser |
 
 ## Quick start
 
@@ -129,9 +141,9 @@ The built-in solver is intentionally labeled **educational**. It produces transp
 
 ## Roadmap
 
-1. Add live per-stage LibreLane progress and extend the layer-aware DEF explorer with exact polygon rendering from GDSII/gds3d.
-2. Connect SymbiYosys formal jobs, FPGA nextpnr/bitstream flows, and Xyce as bounded headless adapters.
-3. Extend ngspice normalization from `.print` tables to native rawfiles, PDK-defined PVT corners, mismatch models, and Xschem round trips.
+1. Add live per-stage LibreLane progress and exact polygon rendering from GDSII.
+2. Extend nextpnr from iCE40 ASC output to board-specific bitstream packing/programming profiles.
+3. Normalize Xyce/CACE/openEMS numeric outputs into the animated chart schema and add curated Xschem round-trip templates.
 4. Execute a validated DEVSIM diode experiment and normalize its output.
 5. Add optional server-side project storage and Git synchronization while retaining local JSON portability.
 6. Add MOS capacitor and MOSFET experiment templates.

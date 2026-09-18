@@ -31,7 +31,7 @@
 ## M4 — Open EDA bridge
 
 - Isolated IIC-OSIC-TOOLS workers.
-- Connected RTL, ngspice, and asynchronous LibreLane/OpenROAD execution.
+- Connected RTL, formal, FPGA, ngspice/Xyce, openEMS, Xschem, CACE, GDS3D, and asynchronous LibreLane/OpenROAD execution.
 - Downloadable GDSII, DEF, LEF, netlist, timing, metrics, and log artifacts.
-- Next: Xschem round trips, layout visualization, and normalized KLayout result adapters.
+- Next: normalized RF/characterization plots, board-specific FPGA bitstream packing, and exact GDS polygon rendering.
 - PDK-aware course templates without redistributing PDK content.

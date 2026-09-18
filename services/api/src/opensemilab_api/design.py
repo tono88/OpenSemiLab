@@ -108,12 +108,12 @@ def make_plan(project: DesignRequest) -> DesignPlan:
         runner="IIC-OSIC-TOOLS isolated worker",
         runner_available=rtl_runner_available or spice_runner_available,
         notice=(
-            "RTL lint, simulation and synthesis plus SPICE simulation are executable in the isolated IIC-OSIC worker. "
+            "RTL, formal, FPGA, SPICE simulation with ngspice/Xyce, and specialized open EDA adapters are executable in the isolated IIC-OSIC worker. "
             "LibreLane physical implementation is available for SKY130/GF180. Mixed-signal co-simulation remains in development."
             if rtl_runner_available and spice_runner_available
             else "RTL lint, simulation and synthesis are executable; LibreLane RTL-to-GDSII is available for SKY130/GF180 projects."
             if rtl_runner_available
-            else "SPICE batch simulation is executable in the isolated IIC-OSIC worker. Layout and signoff adapters remain in development."
+            else "SPICE/Xyce, Xschem, CACE and openEMS adapters are executable in the isolated IIC-OSIC worker."
             if spice_runner_available
             else "This engineering flow is planned; its isolated execution adapter remains in development."
         ),

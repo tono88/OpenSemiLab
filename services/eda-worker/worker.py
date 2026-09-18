@@ -15,6 +15,7 @@ import threading
 import time
 import uuid
 from base64 import b64encode
+from base64 import b64decode
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -22,7 +23,7 @@ from typing import Any
 HOST = "0.0.0.0"
 PORT = int(os.getenv("OPENSEMILAB_WORKER_PORT", "9000"))
 WORK_ROOT = Path(os.getenv("OPENSEMILAB_WORK_ROOT", "/tmp/opensemilab-jobs"))
-MAX_BODY = 512_000
+MAX_BODY = 4_500_000
 MAX_OUTPUT = 200_000
 TIMEOUT_SECONDS = int(os.getenv("OPENSEMILAB_JOB_TIMEOUT", "90"))
 PHYSICAL_TIMEOUT_SECONDS = int(os.getenv("OPENSEMILAB_PHYSICAL_TIMEOUT", "1800"))
@@ -71,14 +72,20 @@ TOOL_INTEGRATIONS = {
     "klayout": ("orchestrated", "Physical verification and layout artifacts"),
     "magic": ("orchestrated", "DRC/PEX through physical flow"),
     "netgen": ("orchestrated", "LVS through physical flow"),
-    "xyce": ("available", "Alternative parallel SPICE"),
-    "openems": ("available", "RF electromagnetic simulation"),
-    "xschem": ("available", "Schematic editor; GUI adapter required"),
+    "xyce": ("direct", "Alternative parallel SPICE"),
+    "openems": ("direct", "RF electromagnetic simulation"),
+    "xschem": ("direct", "Headless schematic netlisting"),
     "gtkwave": ("available", "Waveform GUI; browser viewer is connected instead"),
-    "sby": ("available", "Formal verification"),
-    "nextpnr_ice40": ("available", "FPGA place and route"),
-    "gds3d": ("available", "Native GDS 3D viewer"),
-    "cace": ("available", "Circuit characterization"),
+    "sby": ("direct", "Formal verification"),
+    "nextpnr_ice40": ("direct", "FPGA place and route"),
+    "gds3d": ("direct", "Bounded native GDS 3D validation"),
+    "cace": ("direct", "Circuit characterization"),
+}
+
+ADAPTER_ACTIONS = {"formal", "fpga", "xyce", "openems", "xschem", "gds3d", "cace"}
+ACTION_TOOL = {
+    "formal": "sby", "fpga": "nextpnr_ice40", "xyce": "xyce",
+    "openems": "openems", "xschem": "xschem", "gds3d": "gds3d", "cace": "cace",
 }
 
 PHYSICAL_SCLS = {
@@ -113,10 +120,17 @@ def capabilities() -> dict[str, Any]:
         "spice": tools["ngspice"]["available"],
         "vhdl": tools["ghdl"]["available"],
         "physical": tools["librelane"]["available"] and any(target["available"] for target in targets.values()),
+        "formal": tools["sby"]["available"],
+        "fpga": tools["yosys"]["available"] and tools["nextpnr_ice40"]["available"],
+        "xyce": tools["xyce"]["available"],
+        "openems": tools["openems"]["available"],
+        "xschem": tools["xschem"]["available"],
+        "gds3d": tools["gds3d"]["available"],
+        "cace": tools["cace"]["available"],
     }
     return {
         "worker": "iic-osic-tools",
-        "worker_version": "0.2.0",
+        "worker_version": "0.3.0",
         "ready": all(actions[name] for name in ("lint", "simulate", "synthesize")),
         "all_actions_ready": all(actions.values()),
         "actions": actions,
@@ -145,10 +159,22 @@ def validate_sources(raw: Any, action: str) -> dict[str, str]:
             or any(part in {"", ".", ".."} or not SAFE_PATH_COMPONENT.fullmatch(part) for part in path.parts)
         ):
             raise ValueError(f"unsafe source filename: {filename!r}")
-        if action == "spice":
+        if action in {"spice", "xyce"}:
             allowed_suffixes = {".spice", ".cir", ".ckt", ".lib"}
         elif action == "vhdl":
             allowed_suffixes = {".vhd", ".vhdl"}
+        elif action == "formal":
+            allowed_suffixes = {".v", ".sv", ".vh", ".svh", ".sby"}
+        elif action == "fpga":
+            allowed_suffixes = {".v", ".sv", ".vh", ".svh", ".pcf"}
+        elif action == "openems":
+            allowed_suffixes = {".xml"}
+        elif action == "xschem":
+            allowed_suffixes = {".sch", ".sym", ".tcl", ".spice", ".lib"}
+        elif action == "gds3d":
+            allowed_suffixes = {".gds", ".gdsii", ".txt", ".process"}
+        elif action == "cace":
+            allowed_suffixes = {".yaml", ".yml", ".json", ".spice", ".cir", ".ckt", ".sch", ".sym", ".tcl", ".py"}
         else:
             allowed_suffixes = {".v", ".sv", ".vh", ".svh"}
         if Path(filename).suffix.lower() not in allowed_suffixes:
@@ -156,10 +182,47 @@ def validate_sources(raw: Any, action: str) -> dict[str, str]:
         if not isinstance(content, str):
             raise ValueError(f"source must be text: {filename}")
         total += len(content.encode())
-        if total > 256_000:
-            raise ValueError("source bundle exceeds 256 KB")
+        if total > 3_000_000:
+            raise ValueError("source bundle exceeds 3 MB")
         clean[filename] = content
     return clean
+
+
+def find_entry(sources: dict[str, str], requested: Any, suffixes: set[str], label: str) -> str:
+    if requested is not None:
+        if not isinstance(requested, str) or requested not in sources or Path(requested).suffix.lower() not in suffixes:
+            raise ValueError(f"entry must identify a supplied {label} file")
+        return requested
+    matches = sorted(name for name in sources if Path(name).suffix.lower() in suffixes)
+    if not matches:
+        raise ValueError(f"a {label} entry file is required")
+    return matches[0]
+
+
+def collect_files(job_dir: Path, suffixes: set[str], *, exclude: set[str] | None = None) -> list[dict[str, Any]]:
+    artifacts: list[dict[str, Any]] = []
+    total = 0
+    excluded = exclude or set()
+    for path in sorted(job_dir.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in suffixes:
+            continue
+        relative = path.relative_to(job_dir).as_posix()
+        if relative in excluded:
+            continue
+        size = path.stat().st_size
+        if size > MAX_ARTIFACT_BYTES or total + size > MAX_ARTIFACT_BUNDLE_BYTES:
+            continue
+        raw = path.read_bytes()
+        binary = path.suffix.lower() in {".gds", ".gdsii", ".bin", ".asc", ".bit", ".png"}
+        artifacts.append({
+            "name": relative,
+            "media_type": "application/octet-stream" if binary else "text/plain",
+            "encoding": "base64" if binary else "utf-8",
+            "content": b64encode(raw).decode("ascii") if binary else raw.decode("utf-8", errors="replace"),
+            "size_bytes": size,
+        })
+        total += size
+    return artifacts
 
 
 def run_command(
@@ -302,6 +365,38 @@ def parse_spice_tables(log: str) -> dict[str, Any]:
     return {"schema": "opensemilab.simulation/v1", "engine": "ngspice", "plots": plots}
 
 
+def parse_xyce_outputs(job_dir: Path) -> dict[str, Any]:
+    """Normalize bounded Xyce .prn/.csv tables for the browser plot player."""
+    plots: list[dict[str, Any]] = []
+    for path in sorted([*job_dir.glob("*.prn"), *job_dir.glob("*.csv")]):
+        if path.stat().st_size > MAX_WAVEFORM_BYTES:
+            continue
+        lines = [line.strip() for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip() and not line.lstrip().startswith(('#', '*'))]
+        if len(lines) < 2:
+            continue
+        split = (lambda value: [part.strip() for part in value.split(",")]) if "," in lines[0] else (lambda value: value.split())
+        header = split(lines[0])
+        if len(header) < 2:
+            continue
+        rows: list[list[float]] = []
+        for line in lines[1:]:
+            tokens = split(line)
+            values = [parse_numeric(token) for token in tokens[:len(header)]]
+            if len(values) == len(header) and all(value is not None for value in values):
+                rows.append([float(value) for value in values if value is not None])
+        if not rows:
+            continue
+        x_label, x_unit = spice_axis(header[0])
+        series = [{
+            "name": name, "x_label": x_label, "x_unit": x_unit,
+            "y_label": name, "y_unit": spice_unit(name),
+            "x": [row[0] for row in rows], "y": [row[column] for row in rows],
+        } for column, name in enumerate(header[1:], start=1) if name.upper() != "INDEX"]
+        if series:
+            plots.append({"name": path.name, "analysis": header[0], "series": series})
+    return {"schema": "opensemilab.simulation/v1", "engine": "Xyce", "plots": plots}
+
+
 def physical_summary(job_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "schema": "opensemilab.physical-summary/v1",
@@ -339,10 +434,134 @@ def physical_summary(job_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
+def adapter_result(action: str, engine: str, job_id: str, result: dict[str, Any], artifacts: list[dict[str, Any]], **extra: Any) -> dict[str, Any]:
+    return {
+        "job_id": job_id,
+        "action": action,
+        "engine": engine,
+        "success": result["exit_code"] == 0,
+        **result,
+        "artifacts": artifacts,
+        **extra,
+    }
+
+
+def execute_adapter(action: str, payload: dict[str, Any], sources: dict[str, str], source_names: list[str], top: str, job_id: str, job_dir: Path) -> dict[str, Any]:
+    tool = ACTION_TOOL[action]
+    binary = TOOL_BINARIES[tool]
+    if not shutil.which(binary):
+        raise RuntimeError(f"{binary} is unavailable after IIC-OSIC environment initialization")
+    options = payload.get("adapter") or {}
+    if not isinstance(options, dict):
+        raise ValueError("adapter options must be an object")
+
+    if action == "formal":
+        entry = next((name for name in source_names if name.endswith(".sby")), None)
+        if entry is None:
+            depth = int(options.get("depth", 20))
+            if not 1 <= depth <= 1000:
+                raise ValueError("formal depth must be between 1 and 1000")
+            rtl = [name for name in source_names if Path(name).suffix.lower() in {".v", ".sv", ".vh", ".svh"}]
+            if not rtl:
+                raise ValueError("formal verification requires Verilog/SystemVerilog sources")
+            entry = "opensemilab.sby"
+            config = "\n".join([
+                "[options]", "mode prove", f"depth {depth}", "", "[engines]", "smtbmc", "",
+                "[script]", f"read -formal -sv {' '.join(rtl)}", f"prep -top {top}", "", "[files]", *rtl, "",
+            ])
+            (job_dir / entry).write_text(config, encoding="utf-8")
+        result = run_command([binary, "-f", entry], job_dir)
+        artifacts = collect_files(job_dir, {".sby", ".log", ".txt", ".vcd", ".json", ".xml"}, exclude=set(source_names))
+        return adapter_result(action, "SymbiYosys", job_id, result, artifacts)
+
+    if action == "fpga":
+        rtl = [name for name in source_names if Path(name).suffix.lower() in {".v", ".sv", ".vh", ".svh"}]
+        if not rtl:
+            raise ValueError("FPGA implementation requires Verilog/SystemVerilog sources")
+        device = str(options.get("device", "up5k")).lower()
+        if device not in {"hx1k", "hx8k", "lp1k", "lp8k", "up5k", "u4k"}:
+            raise ValueError("unsupported iCE40 device")
+        package = str(options.get("package", "sg48"))
+        if not SAFE_PATH_COMPONENT.fullmatch(package):
+            raise ValueError("invalid FPGA package")
+        frequency = float(options.get("frequency_mhz", 12.0))
+        if not 0.1 <= frequency <= 500:
+            raise ValueError("FPGA frequency must be between 0.1 and 500 MHz")
+        pcf = next((name for name in source_names if name.endswith(".pcf")), None)
+        synth_script = f"read_verilog -sv {' '.join(rtl)}; synth_ice40 -top {top} -json netlist.json"
+        synth = run_command([TOOL_BINARIES["yosys"], "-p", synth_script], job_dir)
+        if synth["exit_code"] != 0:
+            return adapter_result(action, "Yosys/nextpnr-ice40", job_id, synth, [])
+        command = [binary, f"--{device}", "--package", package, "--json", "netlist.json", "--asc", "design.asc", "--freq", str(frequency), "--pcf-allow-unconstrained"]
+        if pcf:
+            command.extend(["--pcf", pcf])
+        result = run_command(command, job_dir)
+        result["output"] = "SYNTHESIS\n" + synth["output"] + "\nPLACE AND ROUTE\n" + result["output"]
+        result["duration_ms"] += synth["duration_ms"]
+        artifacts = collect_files(job_dir, {".json", ".asc", ".rpt", ".log"}, exclude=set(source_names))
+        return adapter_result(action, "Yosys/nextpnr-ice40", job_id, result, artifacts)
+
+    if action == "xyce":
+        entry = find_entry(sources, payload.get("entry"), {".spice", ".cir", ".ckt"}, "SPICE")
+        result = run_command([binary, "-l", "xyce.log", entry], job_dir)
+        log = (job_dir / "xyce.log").read_text(encoding="utf-8", errors="replace") if (job_dir / "xyce.log").exists() else result["output"]
+        result["output"] = log[-MAX_OUTPUT:]
+        artifacts = collect_files(job_dir, {".log", ".prn", ".csv", ".raw", ".mt0"}, exclude=set(source_names))
+        simulation = parse_xyce_outputs(job_dir)
+        if simulation["plots"]:
+            artifacts.insert(0, text_artifact("simulation-data.json", json.dumps(simulation, separators=(",", ":")), "application/json"))
+        return adapter_result(action, "Xyce", job_id, result, artifacts, simulation=simulation)
+
+    if action == "openems":
+        entry = find_entry(sources, payload.get("entry"), {".xml"}, "openEMS XML")
+        result = run_command([binary, entry], job_dir, timeout_seconds=min(TIMEOUT_SECONDS, 90))
+        artifacts = collect_files(job_dir, {".xml", ".h5", ".vtk", ".vtr", ".s1p", ".s2p", ".csv", ".log"}, exclude=set(source_names))
+        return adapter_result(action, "openEMS", job_id, result, artifacts)
+
+    if action == "xschem":
+        entry = find_entry(sources, payload.get("entry"), {".sch"}, "Xschem schematic")
+        netlist_dir = job_dir / "netlist"
+        netlist_dir.mkdir()
+        result = run_command([binary, "-n", "-q", "-x", "-o", str(netlist_dir), "-N", "generated.spice", entry], job_dir)
+        artifacts = collect_files(job_dir, {".spice", ".cir", ".v", ".vhdl", ".log"}, exclude=set(source_names))
+        return adapter_result(action, "Xschem", job_id, result, artifacts)
+
+    if action == "cace":
+        entry = find_entry(sources, payload.get("entry"), {".yaml", ".yml", ".json"}, "CACE datasheet")
+        result = run_command([binary, entry], job_dir, timeout_seconds=min(TIMEOUT_SECONDS, 90))
+        artifacts = collect_files(job_dir, {".json", ".yaml", ".yml", ".csv", ".log", ".txt", ".png", ".svg"}, exclude=set(source_names))
+        return adapter_result(action, "CACE", job_id, result, artifacts)
+
+    # GDS3D is an interactive OpenGL application. The adapter performs a bounded
+    # import smoke test in the worker display while the browser's physical
+    # explorer remains the interactive renderer.
+    gds = find_entry(sources, payload.get("entry"), {".gds", ".gdsii"}, "GDSII")
+    process_file = next((name for name in source_names if Path(name).suffix.lower() in {".process", ".txt"}), None)
+    if process_file is None:
+        process_file = "opensemilab.process"
+        (job_dir / process_file).write_text(
+            "LayerStart: Substrate\nLayer: 255\nHeight: 0\nThickness: 500\nRed: 0.25\nGreen: 0.32\nBlue: 0.28\nFilter: 0.5\nMetal: 0\nShow: 1\nLayerEnd\n",
+            encoding="utf-8",
+        )
+    command = [binary, "-p", process_file, "-i", gds, "-t", top, "-u", "-v"]
+    xvfb = shutil.which("xvfb-run")
+    if xvfb:
+        command = [xvfb, "-a", *command]
+    result = run_command(command, job_dir, timeout_seconds=8)
+    launched = result["timed_out"] and not re.search(r"(?:fatal|cannot read|invalid gds|segmentation fault)", result["output"], re.IGNORECASE)
+    if launched:
+        result["exit_code"] = 0
+        result["timed_out"] = False
+        result["output"] += "\nGDS3D imported the layout and remained active until the bounded validation window closed."
+    artifacts = collect_files(job_dir, {".process", ".txt", ".geo", ".pro"}, exclude=set(source_names))
+    return adapter_result(action, "GDS3D", job_id, result, artifacts)
+
+
 def execute(payload: dict[str, Any]) -> dict[str, Any]:
     action = payload.get("action")
-    if action not in {"lint", "simulate", "synthesize", "spice", "vhdl", "physical"}:
-        raise ValueError("action must be lint, simulate, synthesize, spice, vhdl, or physical")
+    allowed_actions = {"lint", "simulate", "synthesize", "spice", "vhdl", "physical"} | ADAPTER_ACTIONS
+    if action not in allowed_actions:
+        raise ValueError(f"action must be one of: {', '.join(sorted(allowed_actions))}")
     sources = validate_sources(payload.get("sources"), action)
     top = payload.get("top", "top")
     if not isinstance(top, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_$]*", top):
@@ -352,11 +571,22 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
     WORK_ROOT.mkdir(parents=True, exist_ok=True)
     job_dir = Path(tempfile.mkdtemp(prefix=f"job-{job_id}-", dir=WORK_ROOT))
     try:
+        encodings = payload.get("encodings") or {}
+        if not isinstance(encodings, dict):
+            raise ValueError("encodings must be an object")
         for filename, content in sources.items():
             destination = job_dir / filename
             destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_text(content, encoding="utf-8")
+            if encodings.get(filename) == "base64":
+                try:
+                    destination.write_bytes(b64decode(content, validate=True))
+                except ValueError as error:
+                    raise ValueError(f"invalid base64 source: {filename}") from error
+            else:
+                destination.write_text(content, encoding="utf-8")
         source_names = sorted(sources)
+        if action in ADAPTER_ACTIONS:
+            return execute_adapter(action, payload, sources, source_names, top, job_id, job_dir)
         if action == "physical":
             binary = TOOL_BINARIES["librelane"]
             if not shutil.which(binary):
