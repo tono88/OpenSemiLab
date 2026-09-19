@@ -65,7 +65,14 @@ const ADAPTER_EXTENSIONS:Record<string,string[]>={
   openems:['.xml'],xschem:['.sch','.sym','.tcl',...SPICE_EXTENSIONS],cace:['.yaml','.yml','.json',...SPICE_EXTENSIONS,'.sch','.sym','.tcl','.py'],
 }
 type Action='lint'|'simulate'|'synthesize'|'spice'|'vhdl'|'formal'|'fpga'|'xyce'|'openems'|'xschem'|'cace'|'gds3d'
+type StageId='files'|'verification'|'simulation'|'physical'|'results'
 interface ToolState { available:boolean }
+
+const ACTION_STAGE:Record<Action|'physical',StageId>={
+  lint:'verification',synthesize:'verification',formal:'verification',fpga:'verification',
+  simulate:'simulation',spice:'simulation',vhdl:'simulation',xyce:'simulation',openems:'simulation',xschem:'simulation',cace:'simulation',
+  physical:'physical',gds3d:'physical',
+}
 
 const ADAPTERS=[
   {stage:'verification',action:'formal' as Action,tool:'sby',title:'Verificación formal',titleEn:'Formal verification',detail:'SymbiYosys · propiedades y pruebas'},
@@ -83,8 +90,9 @@ function WizardStep({id,number,title,summary,open,onToggle,children,status}:{id:
 const EXECUTION_DEFAULTS:Record<string,{rtlTop?:string;testbenchTop?:string;spiceEntry?:string}>={
   microcontroller:{rtlTop:'top',testbenchTop:'tb_top'},
   fpga_prototype:{rtlTop:'top',testbenchTop:'tb_top'},
-  sensor_interface:{rtlTop:'sensor_ctrl',testbenchTop:'tb_sensor_ctrl',spiceEntry:'analog/afe.spice'},
+  sensor_interface:{rtlTop:'sensor_ctrl',testbenchTop:'tb_sensor_ctrl',spiceEntry:'simulation/afe_transient.cir'},
   analog_block:{spiceEntry:'simulation/testbench.spice'},
+  rf_frontend:{spiceEntry:'schematic/lna.spice'},
   standard_cell:{rtlTop:'inverter',testbenchTop:'tb_inverter',spiceEntry:'simulation/tb_inverter.spice'},
 }
 
@@ -103,10 +111,14 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
   const [result,setResult]=useState<RunResult|null>(null)
   const [physicalResult,setPhysicalResult]=useState<RunResult|null>(null)
   const [error,setError]=useState('')
+  const [errorStage,setErrorStage]=useState<StageId|null>(null)
   const [tools,setTools]=useState<Record<string,ToolState>>({})
   const [integrations,setIntegrations]=useState<ToolIntegration[]>([])
   const [openSteps,setOpenSteps]=useState<Set<string>>(()=>new Set())
   const [historyOpen,setHistoryOpen]=useState(false)
+  const [activeStage,setActiveStage]=useState<StageId>('files')
+  const [stageResults,setStageResults]=useState<Partial<Record<StageId,RunResult>>>({})
+  const [consoleOpen,setConsoleOpen]=useState(true)
   const [worker,setWorker]=useState<'checking'|'online'|'degraded'|'offline'>('checking')
   const [clockPort,setClockPort]=useState(String(initialPhysical.clock_port??'clk'))
   const [clockPeriod,setClockPeriod]=useState(Number(initialPhysical.clock_period_ns??10))
@@ -118,6 +130,7 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
   const [fpgaPackage,setFpgaPackage]=useState(String(initialManifest.adapters?.fpga?.package??'sg48'))
   const [fpgaFrequency,setFpgaFrequency]=useState(Number(initialManifest.adapters?.fpga?.frequency_mhz??12))
   const [physicalStatus,setPhysicalStatus]=useState('')
+  const [physicalElapsed,setPhysicalElapsed]=useState(0)
   const historyKey=`opensemilab.runs.${project.id}`
   const [runHistory,setRunHistory]=useState<RunSnapshot[]>(()=>{
     try {return JSON.parse(localStorage.getItem(historyKey)??'[]')}
@@ -160,6 +173,12 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
   }
   useEffect(()=>{void refreshCapabilities()},[])
   useEffect(()=>{
+    if(running!=='physical')return
+    const started=Date.now()-physicalElapsed*1000
+    const timer=window.setInterval(()=>setPhysicalElapsed(Math.floor((Date.now()-started)/1000)),1000)
+    return ()=>window.clearInterval(timer)
+  },[running])
+  useEffect(()=>{
     try {setRunHistory(JSON.parse(localStorage.getItem(historyKey)??'[]'))}
     catch {setRunHistory([])}
   },[historyKey])
@@ -167,6 +186,10 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
   function acceptResult(data:RunResult,action:string) {
     setResult(data)
     if(data.summary)setPhysicalResult(data)
+    const stage=ACTION_STAGE[action as Action|'physical']??'results'
+    setStageResults(previous=>({...previous,[stage]:data}))
+    setActiveStage(stage)
+    setConsoleOpen(true)
     const snapshot:RunSnapshot={id:data.job_id,createdAt:new Date().toISOString(),action:data.action??action,engine:data.engine,success:data.success,duration_ms:data.duration_ms,simulation:compactSimulation(data.simulation),summary:data.summary}
     setRunHistory(previous=>{
       const next=[snapshot,...previous.filter(item=>item.id!==snapshot.id)].slice(0,8)
@@ -208,6 +231,7 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
   }
 
   async function run(action:Action) {
+    setActiveStage(ACTION_STAGE[action]);setErrorStage(ACTION_STAGE[action]);setConsoleOpen(true)
     setRunning(action);setError('');setResult(null)
     const relevant=action==='spice'?spiceSources:action==='vhdl'?vhdlSources:(action==='simulate'?[...rtlSources,...testbenches]:rtlSources)
     const sources=Object.fromEntries(relevant.map(file=>[file.path,file.content]))
@@ -223,7 +247,7 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
 
   async function runAdapter(action:Action) {
     const retainedGds=physicalResult?.artifacts.find(artifact=>['.gds','.gdsii'].some(extension=>artifact.name.toLowerCase().endsWith(extension)))
-    setRunning(action);setError('');setResult(null)
+    setActiveStage(ACTION_STAGE[action]);setErrorStage(ACTION_STAGE[action]);setConsoleOpen(true);setRunning(action);setError('');setResult(null)
     try {
       let files=adapterFiles[action]??[]
       let sources=Object.fromEntries(files.map(file=>[file.path,file.content]))
@@ -251,7 +275,7 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
   }
 
   async function runPhysical() {
-    setRunning('physical');setPhysicalStatus(es?'Enviando trabajo…':'Submitting job…');setError('');setResult(null)
+    setActiveStage('physical');setErrorStage('physical');setConsoleOpen(true);setPhysicalElapsed(0);setRunning('physical');setPhysicalStatus(es?'Preparando y enviando el trabajo…':'Preparing and submitting job…');setError('');setResult(null)
     const sources=Object.fromEntries(rtlSources.map(file=>[file.path,file.content]))
     const physical={pdk:project.pdk,clock_port:clockPort,clock_period_ns:clockPeriod,die_width_um:dieWidth,die_height_um:dieHeight,core_utilization_pct:utilization}
     const currentManifest=readManifest(project)
@@ -290,17 +314,25 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
   const physicalGds=physicalResult?.artifacts.find(artifact=>['.gds','.gdsii'].some(extension=>artifact.name.toLowerCase().endsWith(extension)))
   const dashboardResult=result?.summary?result:physicalResult
   const adapterReady=(action:Action)=>action==='formal'?adapterFiles.formal.some(file=>HDL_EXTENSIONS.some(ext=>file.path.endsWith(ext))):action==='fpga'?adapterFiles.fpga.some(file=>HDL_EXTENSIONS.some(ext=>file.path.endsWith(ext))):action==='xyce'?!!spiceEntry:action==='openems'?adapterFiles.openems.length>0:action==='xschem'?adapterFiles.xschem.some(file=>file.path.endsWith('.sch')):action==='cace'?adapterFiles.cace.some(file=>/cace|datasheet/i.test(file.path)&&/\.ya?ml$|\.json$/i.test(file.path)):action==='gds3d'?!!physicalGds:false
-  const renderAdapterCards=(stage:'verification'|'simulation')=>ADAPTERS.filter(item=>item.stage===stage).map(item=>{const ready=adapterReady(item.action),available=tools[item.tool]?.available;return <article className={ready&&available?'ready':''} key={item.action}><div><i/><span><b>{es?item.title:item.titleEn}</b><small>{item.detail}</small></span></div>{item.action==='formal'&&<label>{es?'Profundidad':'Depth'}<input type="number" min="1" max="1000" value={formalDepth} onChange={event=>setFormalDepth(Number(event.target.value))}/></label>}{item.action==='fpga'&&<div className="adapter-inline"><select value={fpgaDevice} onChange={event=>setFpgaDevice(event.target.value)}><option value="up5k">UP5K</option><option value="hx8k">HX8K</option><option value="lp8k">LP8K</option><option value="hx1k">HX1K</option></select><input aria-label={es?'Paquete FPGA':'FPGA package'} value={fpgaPackage} onChange={event=>setFpgaPackage(event.target.value)}/><input aria-label="MHz" type="number" min="0.1" max="500" value={fpgaFrequency} onChange={event=>setFpgaFrequency(Number(event.target.value))}/></div>}<button disabled={!!running||worker==='offline'||!available||!ready} onClick={()=>runAdapter(item.action)}>{running===item.action?(es?'Ejecutando…':'Running…'):(es?'Ejecutar':'Run')}<small>{!available?(es?'No instalada':'Not installed'):!ready?(es?'Falta entrada compatible':'Compatible input required'):item.tool}</small></button></article>})
-  const toggleStep=(id:string)=>setOpenSteps(current=>{const next=new Set(current);next.has(id)?next.delete(id):next.add(id);return next})
-  const goStep=(id:string)=>{setOpenSteps(current=>new Set(current).add(id));window.setTimeout(()=>document.getElementById(`wizard-${id}`)?.scrollIntoView({behavior:'smooth',block:'start'}),0)}
-  useEffect(()=>{if(result||error)setOpenSteps(current=>new Set(current).add('results'))},[result,error])
+  const adapterUnavailableReason=(action:Action,available:boolean|undefined,ready:boolean)=>{
+    if(worker==='offline')return es?'El servicio de ejecución está desconectado.':'The execution service is offline.'
+    if(!available)return es?'La herramienta no está instalada o no fue detectada en el worker.':'The tool is not installed or was not detected in the worker.'
+    if(ready)return ''
+    const required:Partial<Record<Action,string>>={formal:'.sv o .v con rol source',fpga:'.sv/.v y opcionalmente .pcf',xyce:'.spice, .cir o .ckt',openems:'.xml de openEMS',xschem:'.sch de Xschem',cace:'cace.yaml o datasheet.yaml',gds3d:'un .gds generado por RTL → GDSII'}
+    return `${es?'No disponible: este proyecto necesita':'Unavailable: this project needs'} ${required[action]??(es?'una entrada compatible':'a compatible input')}.`
+  }
+  const renderAdapterCards=(stage:'verification'|'simulation')=>ADAPTERS.filter(item=>item.stage===stage).map(item=>{const ready=adapterReady(item.action),available=tools[item.tool]?.available,reason=adapterUnavailableReason(item.action,available,ready);return <article className={ready&&available?'ready':''} key={item.action}><div><i/><span><b>{es?item.title:item.titleEn}</b><small>{item.detail}</small></span></div>{item.action==='formal'&&<label>{es?'Profundidad':'Depth'}<input type="number" min="1" max="1000" value={formalDepth} onChange={event=>setFormalDepth(Number(event.target.value))}/></label>}{item.action==='fpga'&&<div className="adapter-inline"><select value={fpgaDevice} onChange={event=>setFpgaDevice(event.target.value)}><option value="up5k">UP5K</option><option value="hx8k">HX8K</option><option value="lp8k">LP8K</option><option value="hx1k">HX1K</option></select><input aria-label={es?'Paquete FPGA':'FPGA package'} value={fpgaPackage} onChange={event=>setFpgaPackage(event.target.value)}/><input aria-label="MHz" type="number" min="0.1" max="500" value={fpgaFrequency} onChange={event=>setFpgaFrequency(Number(event.target.value))}/></div>}<div className="adapter-run" data-tooltip={reason} tabIndex={reason?0:undefined}><button disabled={!!running||worker==='offline'||!available||!ready} onClick={()=>runAdapter(item.action)}>{running===item.action?(es?'Ejecutando…':'Running…'):(es?'Ejecutar':'Run')}<small>{!available?(es?'No instalada':'Not installed'):!ready?(es?'Falta entrada compatible':'Compatible input required'):item.tool}</small></button></div></article>})
+  const toggleStep=(id:StageId)=>{setActiveStage(id);setOpenSteps(current=>{const next=new Set(current);next.has(id)?next.delete(id):next.add(id);return next})}
+  const goStep=(id:StageId)=>{setActiveStage(id);setOpenSteps(current=>new Set(current).add(id));window.setTimeout(()=>document.getElementById(`wizard-${id}`)?.scrollIntoView({behavior:'smooth',block:'start'}),0)}
+  const dockResult=activeStage==='results'?result:stageResults[activeStage]
+  const stageLabel:Record<StageId,string>={files:es?'Diseño':'Design',verification:es?'Verificación':'Verification',simulation:es?'Simulación':'Simulation',physical:'GDSII',results:es?'Resultados':'Results'}
 
   return <section className="project-workspace">
     <div className="project-toolbar"><div><span>{es?'PROYECTO ACTIVO':'ACTIVE PROJECT'}</span><h2>{project.name}</h2><small>{project.kind} · {project.pdk} · {es?'guardado automático en este navegador':'autosaved in this browser'}</small></div><div><button onClick={exportProject}>{es?'Exportar':'Export'}</button><button onClick={onClose}>{es?'Cerrar':'Close'}</button></div></div>
     <div className={`workspace-worker ${worker}`}><i/>{worker==='online'?(es?'Flujo de diseño IIC-OSIC listo para ejecutar':'IIC-OSIC design flow ready to run'):worker==='degraded'?(es?'Flujo conectado; algunas herramientas no están disponibles':'Flow connected; some tools are unavailable'):worker==='checking'?(es?'Comprobando herramientas del flujo…':'Checking flow tools…'):(es?'Flujo de ejecución desconectado':'Execution flow offline')}<button onClick={refreshCapabilities}>{es?'Comprobar':'Check'}</button></div>
     <details className="tool-inventory"><summary>{es?'Ver cobertura de herramientas IIC-OSIC':'View IIC-OSIC tool coverage'}<span>{integrations.filter(item=>item.available).length}/{integrations.length}</span></summary><ToolCoverage integrations={integrations} locale={locale}/></details>
     <section className="flow-overview"><div><span>{es?'FLUJO DEL PROYECTO':'PROJECT FLOW'}</span><b>{es?'Del diseño a los resultados en cinco etapas':'From design to results in five stages'}</b><small>{es?'Abra únicamente la etapa en la que desea trabajar.':'Open only the stage you want to work on.'}</small></div><button className={historyOpen?'active':''} onClick={()=>setHistoryOpen(value=>!value)}>{es?'Historial':'History'} <i>{runHistory.length}</i></button></section>
-    <nav className="wizard-nav" aria-label={es?'Etapas del proyecto':'Project stages'}>{[['files','01',es?'Diseño':'Design'],['verification','02',es?'Verificación':'Verification'],['simulation','03',es?'Simulación':'Simulation'],['physical','04','GDSII'],['results','05',es?'Resultados':'Results']].map(([id,number,label])=><button className={openSteps.has(id)?'active':''} onClick={()=>goStep(id)} key={id}><span>{number}</span><b>{label}</b><small>{openSteps.has(id)?(es?'Etapa abierta':'Stage open'):(es?'Abrir etapa':'Open stage')} →</small></button>)}</nav>
+    <nav className="wizard-nav" aria-label={es?'Etapas del proyecto':'Project stages'}>{[['files','01',es?'Diseño':'Design'],['verification','02',es?'Verificación':'Verification'],['simulation','03',es?'Simulación':'Simulation'],['physical','04','GDSII'],['results','05',es?'Resultados':'Results']].map(([id,number,label])=><button className={openSteps.has(id)?'active':''} onClick={()=>goStep(id as StageId)} key={id}><span>{number}</span><b>{label}</b><small>{openSteps.has(id)?(es?'Etapa abierta':'Stage open'):(es?'Abrir etapa':'Open stage')} →</small></button>)}</nav>
     {historyOpen&&<section className="workspace-history">{runHistory.length?<RunHistory runs={runHistory} locale={locale} onClear={clearHistory}/>:<p className="empty-history">{es?'Todavía no hay ejecuciones guardadas para este proyecto.':'There are no saved runs for this project yet.'}</p>}</section>}
     <div className="wizard-flow">
     <WizardStep id="files" number="01" title={es?'Diseño y archivos':'Design and files'} summary={es?'Edite fuentes, bancos de prueba y configuración':'Edit sources, testbenches, and configuration'} open={openSteps.has('files')} onToggle={()=>toggleStep('files')} status={`${project.files.length} ${es?'archivos':'files'}`}><div className="project-grid">
@@ -315,8 +347,9 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
       {(testbenches.length||vhdlSources.length||spiceEntry)?<div className="execution-panel"><div><b>{es?'MOTORES DE SIMULACIÓN':'SIMULATION ENGINES'}</b><small>{execution.spiceEntry?`SPICE: ${execution.spiceEntry}`:''}</small></div><div className="project-actions">{testbenches.length>0&&<button disabled={!!running||worker==='offline'||!(tools.iverilog?.available&&tools.vvp?.available)} onClick={()=>run('simulate')}>{running==='simulate'?(es?'Ejecutando…':'Running…'):(es?'Simular RTL':'Simulate RTL')}<small>Icarus Verilog</small></button>}{vhdlSources.length>0&&<button disabled={!!running||worker==='offline'||!tools.ghdl?.available} onClick={()=>run('vhdl')}>{running==='vhdl'?(es?'Ejecutando…':'Running…'):(es?'Simular VHDL':'Simulate VHDL')}<small>GHDL 2008</small></button>}{spiceEntry&&<button disabled={!!running||worker==='offline'||!tools.ngspice?.available} onClick={()=>run('spice')}>{running==='spice'?(es?'Ejecutando…':'Running…'):(es?'Simular SPICE':'Simulate SPICE')}<small>ngspice</small></button>}</div></div>:<div className="adapter-message">{es?'Agregue un testbench o netlist SPICE para habilitar la simulación.':'Add a testbench or SPICE netlist to enable simulation.'}</div>}
       <section className="adapter-hub"><div className="adapter-hub-heading"><div><span>{es?'SIMULACIÓN ESPECIALIZADA':'SPECIALIZED SIMULATION'}</span><b>Xyce · openEMS · Xschem · CACE</b></div><small>{es?'Los controles se habilitan al detectar entradas compatibles.':'Controls become available when compatible inputs are detected.'}</small></div><div className="adapter-grid">{renderAdapterCards('simulation')}</div></section>
     </WizardStep>
-    <WizardStep id="physical" number="04" title={es?'Implementación física':'Physical implementation'} summary="RTL → GDSII · LibreLane / OpenROAD" open={openSteps.has('physical')} onToggle={()=>toggleStep('physical')} status={physicalResult?(physicalResult.success?'PASS':'FAIL'):undefined}>{rtlSources.length>0&&['sky130A','gf180mcuD'].includes(project.pdk)?<div className="physical-panel"><div className="physical-toolchain">LibreLane · Yosys · OpenROAD · OpenSTA · Magic · Netgen · KLayout</div><div className="physical-steps">{['Synthesis','Floorplan','Placement','CTS','Routing','Sign-off'].map((stage,index)=><i className={running==='physical'?'active':physicalResult?.success?'done':''} key={stage}><span>{String(index+1).padStart(2,'0')}</span>{stage}</i>)}</div><div className="physical-config"><label>{es?'Puerto de reloj':'Clock port'}<input value={clockPort} onChange={event=>setClockPort(event.target.value)}/></label><label>{es?'Período (ns)':'Period (ns)'}<input type="number" min="0.1" max="1000" step="0.1" value={clockPeriod} onChange={event=>setClockPeriod(Number(event.target.value))}/></label><label>{es?'Ancho (µm)':'Width (µm)'}<input type="number" min="30" max="5000" value={dieWidth} onChange={event=>setDieWidth(Number(event.target.value))}/></label><label>{es?'Alto (µm)':'Height (µm)'}<input type="number" min="30" max="5000" value={dieHeight} onChange={event=>setDieHeight(Number(event.target.value))}/></label><label>{es?'Utilización (%)':'Utilization (%)'}<input type="number" min="5" max="80" value={utilization} onChange={event=>setUtilization(Number(event.target.value))}/></label><button disabled={!!running||worker==='offline'||!tools.librelane?.available} onClick={runPhysical}>{running==='physical'?(es?'Implementando…':'Implementing…'):(es?'Ejecutar RTL → GDSII':'Run RTL → GDSII')}<small>LibreLane Classic</small></button></div>{physicalStatus&&<p className="physical-status">{physicalStatus}</p>}{physicalGds&&<div className="gds3d-action"><div><b>{es?'GDSII listo':'GDSII ready'}</b><small>{physicalGds.name}</small></div><button disabled={!!running||!tools.gds3d?.available} onClick={()=>runAdapter('gds3d')}>{running==='gds3d'?(es?'Validando…':'Validating…'):(es?'Validar en GDS3D':'Validate in GDS3D')}<small>{es?'El visor interactivo está en Resultados':'Interactive viewer is in Results'}</small></button></div>}</div>:<div className="adapter-message">{es?'Disponible para proyectos RTL con SKY130 o GF180.':'Available for RTL projects using SKY130 or GF180.'}</div>}</WizardStep>
+    <WizardStep id="physical" number="04" title={es?'Implementación física':'Physical implementation'} summary="RTL → GDSII · LibreLane / OpenROAD" open={openSteps.has('physical')} onToggle={()=>toggleStep('physical')} status={physicalResult?(physicalResult.success?'PASS':'FAIL'):undefined}>{rtlSources.length>0&&['sky130A','gf180mcuD'].includes(project.pdk)?<div className="physical-panel"><div className="physical-toolchain">LibreLane · Yosys · OpenROAD · OpenSTA · Magic · Netgen · KLayout</div><div className="physical-steps">{['Synthesis','Floorplan','Placement','CTS','Routing','Sign-off'].map((stage,index)=><i className={running==='physical'?'active':physicalResult?.success?'done':''} style={running==='physical'?{animationDelay:`${index*.16}s`}:undefined} key={stage}><span>{String(index+1).padStart(2,'0')}</span>{stage}</i>)}</div><div className="physical-config"><label>{es?'Puerto de reloj':'Clock port'}<input value={clockPort} onChange={event=>setClockPort(event.target.value)}/></label><label>{es?'Período (ns)':'Period (ns)'}<input type="number" min="0.1" max="1000" step="0.1" value={clockPeriod} onChange={event=>setClockPeriod(Number(event.target.value))}/></label><label>{es?'Ancho (µm)':'Width (µm)'}<input type="number" min="30" max="5000" value={dieWidth} onChange={event=>setDieWidth(Number(event.target.value))}/></label><label>{es?'Alto (µm)':'Height (µm)'}<input type="number" min="30" max="5000" value={dieHeight} onChange={event=>setDieHeight(Number(event.target.value))}/></label><label>{es?'Utilización (%)':'Utilization (%)'}<input type="number" min="5" max="80" value={utilization} onChange={event=>setUtilization(Number(event.target.value))}/></label><button className={running==='physical'?'running':''} disabled={!!running||worker==='offline'||!tools.librelane?.available} onClick={runPhysical}>{running==='physical'?<><span className="run-spinner"/>{es?'Ejecutando flujo RTL → GDSII':'Running RTL → GDSII flow'}<small>{physicalElapsed}s · {es?'puede tardar varios minutos; no cierre la página':'this can take several minutes; keep this page open'}</small></>:[<span key="label">{es?'Ejecutar flujo completo RTL → GDSII':'Run complete RTL → GDSII flow'}</span>,<small key="tool">LibreLane Classic · {es?'síntesis, colocación, ruteo y sign-off':'synthesis, placement, routing and sign-off'}</small>]}</button></div>{physicalStatus&&<p className="physical-status" aria-live="polite"><span className={running==='physical'?'status-pulse':''}/>{physicalStatus}{running==='physical'?` · ${physicalElapsed}s`:''}</p>}{physicalGds&&<div className="gds3d-action"><div><b>{es?'GDSII listo':'GDSII ready'}</b><small>{physicalGds.name}</small></div><button disabled={!!running||!tools.gds3d?.available} onClick={()=>runAdapter('gds3d')}>{running==='gds3d'?(es?'Validando…':'Validating…'):(es?'Validar en GDS3D':'Validate in GDS3D')}<small>{es?'El visor interactivo está en Resultados':'Interactive viewer is in Results'}</small></button></div>}</div>:<div className="adapter-message">{es?'Disponible para proyectos RTL con SKY130 o GF180.':'Available for RTL projects using SKY130 or GF180.'}</div>}</WizardStep>
     <WizardStep id="results" number="05" title={es?'Resultados y análisis':'Results and analysis'} summary={es?'Gráficas, ondas, layout, consola y artefactos':'Plots, waveforms, layout, console, and artifacts'} open={openSteps.has('results')} onToggle={()=>toggleStep('results')} status={result?.success?'PASS':result?'FAIL':undefined}>{error&&<p className="error">{error}</p>}{result?.simulation&&result.simulation.plots.length>0&&<SpiceViewer data={result.simulation} locale={locale}/>} {waveform&&<WaveformViewer content={waveform.content} locale={locale}/>} {dashboardResult?.summary&&<PhysicalDashboard summary={dashboardResult.summary} artifacts={dashboardResult.artifacts} locale={locale}/>} {result?<div className="console"><div className="console-header"><span>{result.engine} · {result.duration_ms} ms{result.pdk?` · ${result.pdk}`:''}</span><b className={result.success?'success':'failed'}>{result.success?(es?'CORRECTO':'PASSED'):(es?'FALLÓ':'FAILED')} · EXIT {result.exit_code}</b></div><details className="console-output" open={!result.success}><summary>{es?'Registro de ejecución':'Execution log'}</summary><pre>{result.output||(es?'La herramienta terminó sin salida.':'The tool completed without output.')}</pre></details>{result.artifacts.length>0&&<ArtifactBrowser artifacts={result.artifacts} locale={locale} onDownload={downloadArtifact}/>}</div>:!error&&!dashboardResult&&<div className="empty-results">{es?'Ejecute una etapa para ver aquí todos sus resultados.':'Run a stage to see all of its results here.'}</div>}</WizardStep>
     </div>
+    <aside className={`result-dock ${consoleOpen?'open':''}`} aria-live="polite"><div className="result-dock-bar"><div><span>{stageLabel[activeStage]}</span><b>{running&&ACTION_STAGE[running as Action|'physical']===activeStage?(es?'EJECUTANDO':'RUNNING'):dockResult?.engine??(es?'Sin ejecución todavía':'No run yet')}</b></div>{dockResult&&<em className={dockResult.success?'success':'failed'}>{dockResult.success?'PASS':'FAIL'}{dockResult.exit_code!==undefined?` · EXIT ${dockResult.exit_code}`:''}</em>}<button onClick={()=>goStep('results')}>{es?'Abrir análisis':'Open analysis'}</button><button className="dock-toggle" onClick={()=>setConsoleOpen(value=>!value)} aria-label={consoleOpen?(es?'Minimizar consola':'Minimize console'):(es?'Abrir consola':'Open console')}>{consoleOpen?'⌄':'⌃'}</button></div>{consoleOpen&&<pre>{running&&ACTION_STAGE[running as Action|'physical']===activeStage?(running==='physical'?`${physicalStatus}\n${es?'Tiempo transcurrido':'Elapsed'}: ${physicalElapsed}s\n${es?'El flujo continúa activo. No cierre esta página.':'The flow is still active. Keep this page open.'}`:`${es?'Ejecutando':'Running'} ${running}…\n${es?'La salida aparecerá aquí al terminar.':'Output will appear here when the run completes.'}`):error&&errorStage===activeStage?error:dockResult?.output||(es?'Esta etapa todavía no tiene una salida. Ejecute una acción para verla aquí.':'This stage has no output yet. Run an action to see it here.')}</pre>}</aside>
   </section>
 }

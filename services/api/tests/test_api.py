@@ -48,7 +48,18 @@ def test_design_templates_cover_major_flows():
     response = client.get("/api/v1/design/templates")
     assert response.status_code == 200
     kinds = {item["id"] for item in response.json()}
-    assert {"microcontroller", "sensor_interface", "analog_block", "rf_frontend"} <= kinds
+    assert {"microcontroller", "sensor_interface", "analog_block", "rf_frontend", "blank_project"} <= kinds
+
+
+def test_blank_project_returns_an_organized_optional_flow():
+    response = client.post("/api/v1/design/plan", json={
+        "name": "Custom project", "kind": "blank_project", "pdk": "sky130A",
+        "level": "guided", "language": "systemverilog"
+    })
+    assert response.status_code == 200
+    result = response.json()
+    assert result["runner_available"] is False
+    assert [stage["id"] for stage in result["stages"]] == ["design", "verification", "implementation"]
 
 
 def test_microcontroller_plan_connects_rtl_to_gds():

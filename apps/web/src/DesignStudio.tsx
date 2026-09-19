@@ -13,6 +13,7 @@ const FALLBACK: Template[] = [
   { id:'rf_frontend', title:'RF front-end', description:'RF/SiGe blocks connecting circuit, electromagnetic and layout verification.', outputs:['S-parameters','EM model','GDSII'], recommended_pdk:'ihp-sg13g2', tags:['RF','SiGe','EM'] },
   { id:'standard_cell', title:'Standard cell / reusable IP', description:'Create, characterize and package a reusable cell or IP block.', outputs:['Liberty','LEF/GDS','verification deck'], recommended_pdk:'sky130A', tags:['IP','characterization','library'] },
   { id:'fpga_prototype', title:'FPGA prototype', description:'Validate digital architecture on iCE40 or ECP5 before an ASIC flow.', outputs:['bitstream','coverage','waveforms'], recommended_pdk:'sky130A', tags:['FPGA','prototype','digital'] },
+  { id:'blank_project', title:'Blank structured project', description:'Start from an organized engineering workspace without example circuitry.', outputs:['project manifest','stage folders','reproducible structure'], recommended_pdk:'sky130A', tags:['blank','structure','custom'] },
 ]
 
 const TEMPLATE_ES: Record<string, Pick<Template,'title'|'description'|'outputs'>> = {
@@ -22,6 +23,7 @@ const TEMPLATE_ES: Record<string, Pick<Template,'title'|'description'|'outputs'>
   rf_frontend:{title:'Frente de radiofrecuencia',description:'Cree bloques RF/SiGe y conecte la verificación de circuito, electromagnética y de layout.',outputs:['parámetros S','modelo EM','GDSII']},
   standard_cell:{title:'Celda estándar / IP reutilizable',description:'Cree, verifique, caracterice y empaquete una celda o bloque IP reutilizable.',outputs:['Liberty','LEF/GDS','reglas de verificación']},
   fpga_prototype:{title:'Prototipo FPGA',description:'Valide la arquitectura digital en iCE40 o ECP5 antes de comprometer un flujo ASIC.',outputs:['bitstream','cobertura','formas de onda']},
+  blank_project:{title:'Proyecto en blanco estructurado',description:'Comience sin circuitos de ejemplo, pero con el manifiesto y las carpetas de cada etapa ya organizadas.',outputs:['manifiesto','carpetas del flujo','estructura reproducible']},
 }
 
 export default function DesignStudio({ locale }: { locale: 'es' | 'en' }) {

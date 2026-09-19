@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 ProjectKind = Literal[
     "microcontroller", "sensor_interface", "analog_block", "rf_frontend",
-    "standard_cell", "fpga_prototype"
+    "standard_cell", "fpga_prototype", "blank_project"
 ]
 PdkName = Literal["sky130A", "gf180mcuD", "ihp-sg13g2", "ihp-sg13cmos5l"]
 ExperienceLevel = Literal["guided", "engineering", "expert"]
@@ -52,6 +52,7 @@ TEMPLATES = [
     DesignTemplate(id="rf_frontend", title="RF front-end", description="Create RF/SiGe blocks and connect circuit, electromagnetic and layout verification.", outputs=["S-parameters", "EM model", "GDSII"], recommended_pdk="ihp-sg13g2", tags=["RF", "SiGe", "EM"]),
     DesignTemplate(id="standard_cell", title="Standard cell / reusable IP", description="Create, verify, characterize and package a reusable cell or IP block.", outputs=["Liberty", "LEF/GDS", "verification deck"], recommended_pdk="sky130A", tags=["IP", "characterization", "library"]),
     DesignTemplate(id="fpga_prototype", title="FPGA prototype", description="Validate digital architecture on iCE40 or ECP5 before committing to an ASIC flow.", outputs=["bitstream", "coverage", "waveforms"], recommended_pdk="sky130A", tags=["FPGA", "prototype", "digital"]),
+    DesignTemplate(id="blank_project", title="Blank structured project", description="Start from an organized engineering workspace without example circuitry.", outputs=["project manifest", "stage folders", "reproducible structure"], recommended_pdk="sky130A", tags=["blank", "structure", "custom"]),
 ]
 
 
@@ -100,6 +101,11 @@ def make_plan(project: DesignRequest) -> DesignPlan:
             stage("rtl", "RTL & tests", "Develop and verify the architecture.", ["Verilator", "Icarus Verilog", "GHDL", "cocotb"], "verified RTL", "ready"),
             stage("synthesis", "FPGA synthesis", "Map the design to FPGA primitives.", ["Yosys"], "technology netlist"),
             stage("pnr", "Place & route", "Implement the design on the selected device.", ["nextpnr", "Project IceStorm", "Project Trellis"], "FPGA bitstream"),
+        ],
+        "blank_project": [
+            stage("design", "Design inputs", "Add source, schematic or model files without replacing the project structure.", ["OpenSemiLab"], "versioned design inputs", "ready"),
+            stage("verification", "Verification", "Add tests, properties and sign-off criteria for the selected design domain.", ["IIC-OSIC-TOOLS"], "verification evidence", "ready"),
+            stage("implementation", "Implementation", "Configure the digital, analog or physical implementation route.", ["IIC-OSIC-TOOLS"], "implementation artifacts", "optional"),
         ],
     }
     return DesignPlan(
