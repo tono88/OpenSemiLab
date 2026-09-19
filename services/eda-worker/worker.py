@@ -130,7 +130,7 @@ def capabilities() -> dict[str, Any]:
     }
     return {
         "worker": "iic-osic-tools",
-        "worker_version": "0.3.0",
+        "worker_version": "0.3.1",
         "ready": all(actions[name] for name in ("lint", "simulate", "synthesize")),
         "all_actions_ready": all(actions.values()),
         "actions": actions,
@@ -464,10 +464,13 @@ def execute_adapter(action: str, payload: dict[str, Any], sources: dict[str, str
             rtl = [name for name in source_names if Path(name).suffix.lower() in {".v", ".sv", ".vh", ".svh"}]
             if not rtl:
                 raise ValueError("formal verification requires Verilog/SystemVerilog sources")
+            rtl_basenames = [Path(name).name for name in rtl]
+            if len(set(rtl_basenames)) != len(rtl_basenames):
+                raise ValueError("formal verification requires unique source basenames across project folders")
             entry = "opensemilab.sby"
             config = "\n".join([
                 "[options]", "mode prove", f"depth {depth}", "", "[engines]", "smtbmc", "",
-                "[script]", f"read -formal -sv {' '.join(rtl)}", f"prep -top {top}", "", "[files]", *rtl, "",
+                "[script]", f"read -formal -sv {' '.join(rtl_basenames)}", f"prep -top {top}", "", "[files]", *rtl, "",
             ])
             (job_dir / entry).write_text(config, encoding="utf-8")
         result = run_command([binary, "-f", entry], job_dir)

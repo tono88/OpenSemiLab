@@ -112,7 +112,15 @@ Index   v-sweep   v(a)       v(y)
         self.assertEqual(result["artifacts"][0]["name"], "waveform.vcd")
 
     def test_formal_adapter_generates_bounded_sby_configuration(self):
-        payload = {"action": "formal", "top": "top", "adapter": {"depth": 32}, "sources": {"rtl/top.sv": "module top; assert property (1); endmodule\n"}}
+        payload = {
+            "action": "formal",
+            "top": "top",
+            "adapter": {"depth": 32},
+            "sources": {
+                "rtl/gpio_peripheral.sv": "module gpio_peripheral; endmodule\n",
+                "rtl/top.sv": "module top; gpio_peripheral gpio(); assert property (1); endmodule\n",
+            },
+        }
         with tempfile.TemporaryDirectory() as temporary:
             original_root = worker.WORK_ROOT
             worker.WORK_ROOT = Path(temporary)
@@ -131,6 +139,28 @@ Index   v-sweep   v(a)       v(y)
         self.assertTrue(result["success"])
         self.assertEqual(captured["command"][1:], ["-f", "opensemilab.sby"])
         self.assertIn("depth 32", captured["config"])
+        self.assertIn("read -formal -sv gpio_peripheral.sv top.sv", captured["config"])
+        self.assertIn("[files]\nrtl/gpio_peripheral.sv\nrtl/top.sv", captured["config"])
+        self.assertNotIn("read -formal -sv rtl/", captured["config"])
+
+    def test_formal_adapter_rejects_duplicate_source_basenames(self):
+        payload = {
+            "action": "formal",
+            "top": "top",
+            "sources": {
+                "rtl/shared.sv": "module shared; endmodule\n",
+                "verification/shared.sv": "module shared_test; endmodule\n",
+            },
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            original_root = worker.WORK_ROOT
+            worker.WORK_ROOT = Path(temporary)
+            try:
+                with patch.object(worker.shutil, "which", return_value="/usr/bin/sby"):
+                    with self.assertRaisesRegex(ValueError, "unique source basenames"):
+                        worker.execute(payload)
+            finally:
+                worker.WORK_ROOT = original_root
 
     def test_fpga_adapter_runs_yosys_then_nextpnr_and_collects_asc(self):
         payload = {"action": "fpga", "top": "top", "adapter": {"device": "up5k", "package": "sg48", "frequency_mhz": 24}, "sources": {"rtl/top.sv": "module top(output logic led); assign led=1; endmodule\n", "constraints/pins.pcf": "set_io led 39\n"}}
