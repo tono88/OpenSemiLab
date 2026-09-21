@@ -86,6 +86,12 @@ The specialized adapter cards infer their entry point from project files and rem
 | CACE | a file named `cace*.yaml` or `datasheet*.yaml/json` | characterization reports, tables and plots |
 | GDS3D | GDSII from the latest LibreLane run | bounded native import validation; interactive layers remain in the browser |
 
+FPGA projects may define `execution.fpga_top` independently from `execution.rtl_top`. This lets a reusable core keep its full internal bus interface while nextpnr implements a small board wrapper with only real package pins. The worker checks top-level I/O against known iCE40 package capacity before place-and-route and reports an actionable wrapper diagnostic.
+
+### Project import
+
+The Design Studio accepts both exported `.opensemilab.json` files and public repository-root URLs such as `https://github.com/owner/project`. GitHub imports are downloaded through fixed GitHub API/codeload hosts, bounded by archive, file-count and text-size limits, and converted into the portable OpenSemiLab project schema. The importer detects supported design files, assigns roles, infers a likely RTL top, records provenance, and leaves `project.json` editable for project-specific refinement.
+
 ## Quick start
 
 ### Docker Compose
