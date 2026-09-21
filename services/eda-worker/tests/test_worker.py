@@ -14,6 +14,23 @@ SPEC.loader.exec_module(worker)
 
 
 class WorkerResultTests(unittest.TestCase):
+    def test_run_command_decodes_partial_byte_output_on_timeout(self):
+        timeout = worker.subprocess.TimeoutExpired(
+            cmd=["librelane"],
+            timeout=30,
+            output=b"partial stdout\n",
+            stderr=b"partial stderr\n",
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.object(worker.subprocess, "run", side_effect=timeout):
+                result = worker.run_command(["librelane"], Path(temporary), timeout_seconds=30)
+
+        self.assertEqual(result["exit_code"], 124)
+        self.assertTrue(result["timed_out"])
+        self.assertIn("partial stdout", result["output"])
+        self.assertIn("partial stderr", result["output"])
+        self.assertIn("Timed out after 30s", result["output"])
+
     def test_capabilities_explain_integration_level(self):
         with patch.object(worker.shutil, "which", return_value="/usr/bin/tool"):
             data = worker.capabilities()
