@@ -507,6 +507,27 @@ def execute_adapter(action: str, payload: dict[str, Any], sources: dict[str, str
         synth = run_command([TOOL_BINARIES["yosys"], "-p", synth_script], job_dir)
         if synth["exit_code"] != 0:
             return adapter_result(action, "Yosys/nextpnr-ice40", job_id, synth, [])
+        package_io_limits = {"sg48": 39, "uwg30": 21, "cm36": 25, "tq144": 107, "ct256": 206}
+        try:
+            netlist = json.loads((job_dir / "netlist.json").read_text(encoding="utf-8"))
+            ports = netlist.get("modules", {}).get(top, {}).get("ports", {})
+            io_bits = sum(len(port.get("bits", [])) for port in ports.values())
+        except (OSError, ValueError, TypeError):
+            io_bits = 0
+        io_limit = package_io_limits.get(package.lower())
+        if io_limit and io_bits > io_limit:
+            diagnostic = {
+                "exit_code": 2,
+                "output": (
+                    "SYNTHESIS\n" + synth["output"] + "\nFPGA PREFLIGHT\n"
+                    f"ERROR: FPGA top '{top}' exposes {io_bits} I/O bits, but package {package} supports at most {io_limit}. "
+                    "Select or create a board wrapper with only physical clock, reset, LED/button and peripheral pins, "
+                    "then set execution.fpga_top to that wrapper module."
+                ),
+                "duration_ms": synth["duration_ms"],
+                "timed_out": False,
+            }
+            return adapter_result(action, "Yosys/nextpnr-ice40", job_id, diagnostic, [], fpga_status="io_overflow", io_bits=io_bits, io_limit=io_limit)
         command = [binary, f"--{device}", "--package", package, "--json", "netlist.json", "--asc", "design.asc", "--freq", str(frequency), "--pcf-allow-unconstrained"]
         if pcf:
             command.extend(["--pcf", pcf])
