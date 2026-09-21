@@ -111,7 +111,7 @@ Index   v-sweep   v(a)       v(y)
         self.assertEqual([next(flag for flag in ("-a", "-e", "-r") if flag in command) for command in commands], ["-a", "-e", "-r"])
         self.assertEqual(result["artifacts"][0]["name"], "waveform.vcd")
 
-    def test_formal_adapter_generates_bounded_sby_configuration(self):
+    def test_formal_adapter_generates_bounded_bmc_configuration(self):
         payload = {
             "action": "formal",
             "top": "top",
@@ -137,11 +137,42 @@ Index   v-sweep   v(a)       v(y)
             finally:
                 worker.WORK_ROOT = original_root
         self.assertTrue(result["success"])
+        self.assertEqual(result["formal_status"], "pass")
         self.assertEqual(captured["command"][1:], ["-f", "opensemilab.sby"])
+        self.assertIn("mode bmc", captured["config"])
         self.assertIn("depth 32", captured["config"])
         self.assertIn("read -formal -sv gpio_peripheral.sv top.sv", captured["config"])
         self.assertIn("[files]\nrtl/gpio_peripheral.sv\nrtl/top.sv", captured["config"])
         self.assertNotIn("read -formal -sv rtl/", captured["config"])
+
+    def test_formal_prove_reports_failed_induction_as_unknown(self):
+        payload = {
+            "action": "formal",
+            "top": "top",
+            "adapter": {"depth": 20, "mode": "prove"},
+            "sources": {"rtl/top.sv": "module top(input logic clk); always @(posedge clk) assert(1); endmodule\n"},
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            original_root = worker.WORK_ROOT
+            worker.WORK_ROOT = Path(temporary)
+            try:
+                with patch.object(worker.shutil, "which", return_value="/usr/bin/sby"), patch.object(
+                    worker,
+                    "run_command",
+                    return_value={
+                        "exit_code": 4,
+                        "output": "basecase: Status returned by engine for basecase: pass\nTemporal induction failed!\nDONE (UNKNOWN, rc=4)",
+                        "duration_ms": 1,
+                        "timed_out": False,
+                    },
+                ):
+                    result = worker.execute(payload)
+            finally:
+                worker.WORK_ROOT = original_root
+        self.assertFalse(result["success"])
+        self.assertEqual(result["formal_status"], "unknown")
+        self.assertEqual(result["formal_mode"], "prove")
+        self.assertEqual(result["engine"], "SymbiYosys (PROVE)")
 
     def test_formal_adapter_rejects_duplicate_source_basenames(self):
         payload = {
