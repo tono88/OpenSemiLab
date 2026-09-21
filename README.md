@@ -78,7 +78,7 @@ The specialized adapter cards infer their entry point from project files and rem
 
 | Workflow | Accepted project input | Portable result |
 |---|---|---|
-| SymbiYosys | RTL plus optional `.sby` | proof logs, traces, generated bounded config |
+| SymbiYosys | RTL plus optional `.sby` | selectable bounded BMC or inductive proof, with PASS/FAIL/INCONCLUSIVE status and traces |
 | nextpnr iCE40 | RTL plus optional `.pcf` | synthesized JSON and routed `.asc` |
 | Xyce | `.cir` / `.spice` | logs, raw tables, normalized animated plots |
 | openEMS | solver `.xml` | field, CSV, VTK and Touchstone files |
