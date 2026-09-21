@@ -45,6 +45,43 @@ const defaultPhysical={clock_port:'clk',clock_period_ns:10,die_width_um:120,die_
 const manifestObject = (name:string,kind:string,pdk:string) => ({schema:'opensemilab.project/v3',name,kind,pdk,execution:executionByKind[kind]??{},physical:defaultPhysical})
 const manifest = (name:string, kind:string, pdk:string) => JSON.stringify(manifestObject(name,kind,pdk),null,2)+'\n'
 
+const legacyMicroWatchdog = `module watchdog_timer #(
+  parameter integer LIMIT = 32
+) (
+  input  logic clk,
+  input  logic rst_n,
+  input  logic kick,
+  output logic timeout_irq
+);
+  localparam integer WIDTH = $clog2(LIMIT + 1);
+  logic [WIDTH-1:0] count;
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n || kick) begin count <= '0; timeout_irq <= 1'b0; end
+    else if (count == LIMIT-1) begin count <= count; timeout_irq <= 1'b1; end
+    else count <= count + 1'b1;
+  end
+endmodule
+`
+
+const microWatchdog = `module watchdog_timer #(
+  parameter integer LIMIT = 32
+) (
+  input  logic clk,
+  input  logic rst_n,
+  input  logic kick,
+  output logic timeout_irq
+);
+  localparam integer WIDTH = $clog2(LIMIT + 1);
+  logic [WIDTH-1:0] count;
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin count <= '0; timeout_irq <= 1'b0; end
+    else if (kick) begin count <= '0; timeout_irq <= 1'b0; end
+    else if (count == LIMIT-1) begin count <= count; timeout_irq <= 1'b1; end
+    else count <= count + 1'b1;
+  end
+endmodule
+`
+
 export function starterFiles(kind:string,name:string,pdk:string):ProjectFile[] {
   const common:ProjectFile[]=[
     {path:'README.md',role:'documentation',content:readme(name,kind,pdk)},
@@ -90,23 +127,7 @@ endmodule
   end
 endmodule
 `},
-      {path:'rtl/watchdog_timer.sv',role:'source',content:`module watchdog_timer #(
-  parameter integer LIMIT = 32
-) (
-  input  logic clk,
-  input  logic rst_n,
-  input  logic kick,
-  output logic timeout_irq
-);
-  localparam integer WIDTH = $clog2(LIMIT + 1);
-  logic [WIDTH-1:0] count;
-  always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n || kick) begin count <= '0; timeout_irq <= 1'b0; end
-    else if (count == LIMIT-1) begin count <= count; timeout_irq <= 1'b1; end
-    else count <= count + 1'b1;
-  end
-endmodule
-`},
+      {path:'rtl/watchdog_timer.sv',role:'source',content:microWatchdog},
       {path:'tb/tb_top.sv',role:'testbench',content:`\`timescale 1ns/1ps
 module tb_top;
   logic clk = 0;
@@ -433,6 +454,11 @@ export function loadProjects():StoredProject[] {
       const starters=starterFiles(project.kind,project.name,project.pdk)
       const missing=starters.filter(file=>!project.files.some(existing=>existing.path===file.path))
       let files=[...project.files,...missing]
+      const watchdogIndex=files.findIndex(file=>file.path==='rtl/watchdog_timer.sv')
+      if(project.kind==='microcontroller'&&watchdogIndex>=0&&files[watchdogIndex].content===legacyMicroWatchdog) {
+        files[watchdogIndex]={...files[watchdogIndex],content:microWatchdog}
+        changed=true
+      }
       const manifestIndex=files.findIndex(file=>file.path==='project.json')
       if(manifestIndex>=0) {
         try {
