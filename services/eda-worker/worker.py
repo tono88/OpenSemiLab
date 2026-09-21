@@ -231,6 +231,13 @@ def run_command(
     timeout_seconds: int = TIMEOUT_SECONDS,
     env_overrides: dict[str, str] | None = None,
 ) -> dict[str, Any]:
+    def output_text(value: str | bytes | None) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="replace")
+        return value
+
     started = time.monotonic()
     try:
         process = subprocess.run(
@@ -241,10 +248,14 @@ def run_command(
             timeout=timeout_seconds,
             env={**os.environ, "HOME": str(cwd), **(env_overrides or {})},
         )
-        output = (process.stdout + ("\n" if process.stdout and process.stderr else "") + process.stderr)[-MAX_OUTPUT:]
+        stdout = output_text(process.stdout)
+        stderr = output_text(process.stderr)
+        output = (stdout + ("\n" if stdout and stderr else "") + stderr)[-MAX_OUTPUT:]
         return {"exit_code": process.returncode, "output": output, "duration_ms": round((time.monotonic() - started) * 1000), "timed_out": False}
     except subprocess.TimeoutExpired as error:
-        output = ((error.stdout or "") + (error.stderr or ""))[-MAX_OUTPUT:]
+        stdout = output_text(error.stdout)
+        stderr = output_text(error.stderr)
+        output = (stdout + ("\n" if stdout and stderr else "") + stderr)[-MAX_OUTPUT:]
         return {"exit_code": 124, "output": output + f"\nTimed out after {timeout_seconds}s", "duration_ms": round((time.monotonic() - started) * 1000), "timed_out": True}
 
 
