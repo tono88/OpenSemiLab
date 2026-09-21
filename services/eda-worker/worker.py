@@ -457,6 +457,9 @@ def execute_adapter(action: str, payload: dict[str, Any], sources: dict[str, str
 
     if action == "formal":
         entry = next((name for name in source_names if name.endswith(".sby")), None)
+        mode = str(options.get("mode", "bmc")).lower()
+        if mode not in {"bmc", "prove"}:
+            raise ValueError("formal mode must be bmc or prove")
         if entry is None:
             depth = int(options.get("depth", 20))
             if not 1 <= depth <= 1000:
@@ -469,13 +472,22 @@ def execute_adapter(action: str, payload: dict[str, Any], sources: dict[str, str
                 raise ValueError("formal verification requires unique source basenames across project folders")
             entry = "opensemilab.sby"
             config = "\n".join([
-                "[options]", "mode prove", f"depth {depth}", "", "[engines]", "smtbmc", "",
+                "[options]", f"mode {mode}", f"depth {depth}", "", "[engines]", "smtbmc", "",
                 "[script]", f"read -formal -sv {' '.join(rtl_basenames)}", f"prep -top {top}", "", "[files]", *rtl, "",
             ])
             (job_dir / entry).write_text(config, encoding="utf-8")
         result = run_command([binary, "-f", entry], job_dir)
         artifacts = collect_files(job_dir, {".sby", ".log", ".txt", ".vcd", ".json", ".xml"}, exclude=set(source_names))
-        return adapter_result(action, "SymbiYosys", job_id, result, artifacts)
+        output_upper = result["output"].upper()
+        if result["exit_code"] == 0 or "DONE (PASS" in output_upper:
+            formal_status = "pass"
+        elif "DONE (UNKNOWN" in output_upper or "TEMPORAL INDUCTION FAILED" in output_upper:
+            formal_status = "unknown"
+        elif "DONE (FAIL" in output_upper or "ASSERT FAILED" in output_upper:
+            formal_status = "fail"
+        else:
+            formal_status = "error"
+        return adapter_result(action, f"SymbiYosys ({mode.upper()})", job_id, result, artifacts, formal_status=formal_status, formal_mode=mode)
 
     if action == "fpga":
         rtl = [name for name in source_names if Path(name).suffix.lower() in {".v", ".sv", ".vh", ".svh"}]
