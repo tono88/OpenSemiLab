@@ -1,5 +1,11 @@
+import io
+import json
+import tarfile
+
+import httpx
 from fastapi.testclient import TestClient
 
+from opensemilab_api.github_import import import_public_github_repository, parse_github_repository
 from opensemilab_api.main import app
 from opensemilab_api.eda import EdaRunRequest
 
@@ -105,3 +111,45 @@ def test_specialized_eda_actions_share_the_validated_contract():
     for action in ("formal", "fpga", "xyce", "openems", "xschem", "gds3d", "cace"):
         request = EdaRunRequest(action=action, top="top", sources={"input.txt": "bounded"}, adapter={"depth": 20})
         assert request.action == action
+
+
+def test_github_import_rejects_non_github_and_nested_urls():
+    for url in ("http://github.com/owner/repo", "https://example.com/owner/repo", "https://github.com/owner/repo/tree/main"):
+        try:
+            parse_github_repository(url)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"unsafe URL accepted: {url}")
+
+
+def test_github_import_builds_portable_project_and_infers_top():
+    archive_bytes = io.BytesIO()
+    with tarfile.open(fileobj=archive_bytes, mode="w:gz") as archive:
+        for name, content in {
+            "demo-main/rtl/demo.v": "module demo(input clk, output led); assign led=clk; endmodule\n",
+            "demo-main/tb/tb_demo.v": "module tb_demo; demo dut(); endmodule\n",
+            "demo-main/README.md": "# Demo\n",
+            "demo-main/node_modules/ignored.v": "module ignored; endmodule\n",
+        }.items():
+            data = content.encode()
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            archive.addfile(info, io.BytesIO(data))
+    payload = archive_bytes.getvalue()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "api.github.com":
+            return httpx.Response(200, json={"default_branch": "main"})
+        if request.url.host == "codeload.github.com":
+            return httpx.Response(200, content=payload)
+        return httpx.Response(404)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as github:
+        project = import_public_github_repository("https://github.com/owner/demo", github)
+    manifest = next(item for item in project["files"] if item["path"] == "project.json")
+    paths = {item["path"] for item in project["files"]}
+    assert project["name"] == "demo"
+    assert project["kind"] == "fpga_prototype"
+    assert "node_modules/ignored.v" not in paths
+    assert json.loads(manifest["content"])["execution"]["rtl_top"] == "demo"
