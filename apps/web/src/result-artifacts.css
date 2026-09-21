@@ -34,6 +34,9 @@
 .console-output[open] summary::before { content: '−'; }
 .console-output summary span { margin-left: auto; color: #527064; }
 .console-output pre { border-top: 1px solid #ffffff12; }
+.console-tools { display: flex; justify-content: flex-end; gap: 6px; padding: 7px 12px; border-top: 1px solid #ffffff12; background: #06100c; }
+.console-tools button { border: 1px solid #ffffff20; background: #091813; color: #9ab6ab; padding: 6px 9px; font: 8px DM Mono; cursor: pointer; }
+.console-tools button:hover { border-color: #45e6a655; color: #dff8ee; }
 
 .console > .artifact-browser {
   display: block;
