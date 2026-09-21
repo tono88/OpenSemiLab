@@ -217,6 +217,27 @@ Index   v-sweep   v(a)       v(y)
         self.assertIn("constraints/pins.pcf", commands[1])
         self.assertTrue(any(artifact["name"] == "design.asc" for artifact in result["artifacts"]))
 
+    def test_fpga_adapter_explains_top_level_io_overflow_before_place_and_route(self):
+        payload = {"action": "fpga", "top": "raw_core", "adapter": {"device": "up5k", "package": "sg48"}, "sources": {"rtl/core.sv": "module raw_core(input logic [63:0] pins); endmodule\n"}}
+        with tempfile.TemporaryDirectory() as temporary:
+            original_root = worker.WORK_ROOT
+            worker.WORK_ROOT = Path(temporary)
+            commands = []
+            def fake_run(command, cwd, timeout_seconds=worker.TIMEOUT_SECONDS, env_overrides=None):
+                commands.append(command)
+                (cwd / "netlist.json").write_text('{"modules":{"raw_core":{"ports":{"pins":{"bits":[' + ','.join(str(index) for index in range(64)) + ']}}}}}', encoding="utf-8")
+                return {"exit_code": 0, "output": "synthesis ok", "duration_ms": 1, "timed_out": False}
+            try:
+                with patch.object(worker.shutil, "which", return_value="/usr/bin/tool"), patch.object(worker, "run_command", side_effect=fake_run):
+                    result = worker.execute(payload)
+            finally:
+                worker.WORK_ROOT = original_root
+        self.assertFalse(result["success"])
+        self.assertEqual(result["fpga_status"], "io_overflow")
+        self.assertEqual(result["io_bits"], 64)
+        self.assertIn("board wrapper", result["output"])
+        self.assertEqual(len(commands), 1)
+
     def test_specialized_adapters_use_named_bounded_commands(self):
         cases = [
             ("xyce", {"entry": "tb.cir", "sources": {"tb.cir": "V1 1 0 1\n.end\n"}}, "Xyce"),
