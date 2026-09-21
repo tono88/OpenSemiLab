@@ -45,6 +45,8 @@ export interface RunResult {
   scl?:string
   simulation?:SimulationData
   summary?:PhysicalSummary
+  formal_status?:'pass'|'fail'|'unknown'|'error'
+  formal_mode?:'bmc'|'prove'
 }
 
 export interface RunSnapshot {
@@ -56,4 +58,5 @@ export interface RunSnapshot {
   duration_ms:number
   simulation?:SimulationData
   summary?:PhysicalSummary
+  formal_status?:'pass'|'fail'|'unknown'|'error'
 }

@@ -176,6 +176,7 @@
 .run-selector button.active { border-color: #45e6a660; background: #0d241b; }
 .run-selector i { grid-row: 1/4; width: 6px; height: 6px; margin-top: 3px; border-radius: 50%; background: #ff7676; }
 .run-selector i.ok { background: #45e6a6; }
+.run-selector i.warn { background: #e8bd69; }
 .run-selector b { color: #c5eddd; font: 9px DM Mono; }
 .run-selector span,
 .run-selector small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 7px DM Mono; }
