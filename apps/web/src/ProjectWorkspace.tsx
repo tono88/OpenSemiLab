@@ -176,6 +176,10 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
   }
   useEffect(()=>{void refreshCapabilities()},[])
   useEffect(()=>{
+    const manifest=readManifest(project)
+    setFpgaTop(String(manifest.execution?.fpga_top??manifest.execution?.rtl_top??'top'))
+  },[project.id])
+  useEffect(()=>{
     if(running!=='physical')return
     const started=Date.now()-physicalElapsed*1000
     const timer=window.setInterval(()=>setPhysicalElapsed(Math.floor((Date.now()-started)/1000)),1000)
