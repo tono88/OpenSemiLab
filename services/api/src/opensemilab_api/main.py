@@ -8,7 +8,9 @@ from opensemilab_api import __version__
 from opensemilab_api.design import DesignPlan, DesignRequest, DesignTemplate, TEMPLATES, make_plan
 from opensemilab_api.eda import EdaRunRequest
 from opensemilab_api.engines import ENGINES
+from opensemilab_api.github_import import import_public_github_repository
 from opensemilab_api.models import EngineCapability, Experiment, SimulationResult
+from pydantic import BaseModel, Field
 
 app = FastAPI(
     title="OpenSemiLab API",
@@ -23,6 +25,10 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
 )
+
+
+class GithubImportRequest(BaseModel):
+    url: str = Field(min_length=20, max_length=300)
 
 
 @app.get("/api/health")
@@ -43,6 +49,14 @@ def list_design_templates() -> list[DesignTemplate]:
 @app.post("/api/v1/design/plan", response_model=DesignPlan)
 def create_design_plan(project: DesignRequest) -> DesignPlan:
     return make_plan(project)
+
+
+@app.post("/api/v1/design/import-github")
+def import_github_project(request: GithubImportRequest) -> dict:
+    try:
+        return import_public_github_repository(request.url)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @app.get("/api/v1/eda/capabilities")
