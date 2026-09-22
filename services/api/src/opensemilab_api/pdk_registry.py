@@ -94,6 +94,7 @@ def _unpack(archive: Path, destination: Path, expanded: list[int], files: list[i
         files[0] += 1
         if files[0] > MAX_FILES:
             raise ValueError("PDK contains too many files")
+        destination.mkdir(parents=True, exist_ok=True)
         shutil.copy2(archive, destination / archive.name)
         expanded[0] += archive.stat().st_size
 

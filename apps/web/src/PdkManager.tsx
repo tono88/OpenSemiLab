@@ -51,8 +51,14 @@ export default function PdkManager({locale,onSelect,onProfilesChange}:{locale:'e
     files.forEach(file=>form.append('files',file))
     try {
       const response=await fetch('/api/v1/pdks/import',{method:'POST',body:form})
-      const body=await response.json()
-      if(!response.ok)throw new Error(body.detail??'Import failed')
+      const raw=await response.text()
+      let body:{detail?:string}={}
+      try {body=raw?JSON.parse(raw):{}}
+      catch {
+        if(response.status===413)throw new Error(es?'El paquete supera el límite de carga del servidor. Reconstruya el servicio web con la configuración BYOPDK actualizada.':'The package exceeds the server upload limit. Rebuild the web service with the updated BYOPDK configuration.')
+        throw new Error(es?`El servidor devolvió una respuesta no válida (HTTP ${response.status}).`:`The server returned an invalid response (HTTP ${response.status}).`)
+      }
+      if(!response.ok)throw new Error(body.detail??(es?'Falló la importación.':'Import failed.'))
       setName('');setVersion('');setProcess('');setStack('');setFiles([]);setAuthorized(false)
       setMessage(es?'PDK importado. Revise la matriz antes de usarlo.':'PDK imported. Review the readiness matrix before using it.')
       await refresh()
