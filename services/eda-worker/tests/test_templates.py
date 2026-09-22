@@ -4,9 +4,17 @@ from pathlib import Path
 
 
 PROJECT_STORE = Path(__file__).resolve().parents[3] / "apps" / "web" / "src" / "projectStore.ts"
+WORKER_DOCKERFILE = Path(__file__).resolve().parents[1] / "Dockerfile"
 
 
 class StarterTemplateTests(unittest.TestCase):
+    def test_worker_image_prepares_job_volume_for_unprivileged_user(self):
+        dockerfile = WORKER_DOCKERFILE.read_text(encoding="utf-8")
+        permission_setup = "install -d -o 1000 -g 1000 -m 0750 /var/lib/opensemilab-jobs"
+        self.assertIn(permission_setup, dockerfile)
+        self.assertLess(dockerfile.index(permission_setup), dockerfile.index("USER 1000:1000"))
+        self.assertIn("OPENSEMILAB_WORK_ROOT=/var/lib/opensemilab-jobs", dockerfile)
+
     def test_microcontroller_watchdog_separates_async_reset_from_sync_kick(self):
         source = PROJECT_STORE.read_text(encoding="utf-8")
         match = re.search(r"const microWatchdog = `(?P<body>.*?)`\n", source, re.DOTALL)
