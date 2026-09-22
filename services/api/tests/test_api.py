@@ -107,6 +107,22 @@ def test_private_pdk_import_rejects_zip_slip(tmp_path, monkeypatch):
     assert "unsafe path" in response.json()["detail"].lower()
 
 
+def test_private_pdk_import_accepts_individual_views(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENSEMILAB_PDK_ROOT", str(tmp_path / "pdks"))
+    response = client.post(
+        "/api/v1/pdks/import",
+        data={
+            "display_name": "Individual views", "version": "1.0", "process": "demo",
+            "stack": "1P5M", "license_acknowledged": "true",
+        },
+        files=[("files", ("cells.lib", b"library(test) {}", "application/octet-stream"))],
+    )
+    assert response.status_code == 201
+    pdk = response.json()
+    assert pdk["file_count"] == 1
+    assert pdk["inventory"]["liberty"] == 1
+
+
 def test_private_pdk_profile_resolves_relative_librelane_adapter(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENSEMILAB_PDK_ROOT", str(tmp_path / "pdks"))
     archive = io.BytesIO()
