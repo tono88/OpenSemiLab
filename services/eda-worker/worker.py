@@ -5,7 +5,9 @@ This service intentionally exposes named workflows rather than a shell.
 
 from __future__ import annotations
 
+import gzip
 import json
+import math
 import os
 import re
 import shutil
@@ -36,6 +38,7 @@ PHYSICAL_MIN_RUNTIME_FREE_MB = int(os.getenv("OPENSEMILAB_PHYSICAL_MIN_RUNTIME_F
 SAFE_PATH_COMPONENT = re.compile(r"^[A-Za-z0-9_.-]+$")
 MAX_ARTIFACT_BYTES = 20_000_000
 MAX_ARTIFACT_BUNDLE_BYTES = 40_000_000
+MAX_COMPRESSED_ARTIFACT_SOURCE_BYTES = 250_000_000
 MAX_WAVEFORM_BYTES = 5_000_000
 JOBS: dict[str, dict[str, Any]] = {}
 JOBS_LOCK = threading.Lock()
@@ -299,15 +302,23 @@ def classify_physical_log(output: str) -> dict[str, Any]:
             severity, category = "warning", "warnings"
         else:
             continue
+        external_pdk = bool(re.search(r"(?:sky130_fd_io|\[STA-(?:1111|1140|1173)\])", stripped, re.IGNORECASE))
         normalized = re.sub(r"\b\d+(?:\.\d+)?\b", "#", stripped)[:240]
         key = f"{severity}:{normalized}"
-        item = groups.setdefault(key, {"severity": severity, "category": category, "message": stripped[:500], "count": 0})
+        item = groups.setdefault(key, {
+            "severity": severity,
+            "category": "pdk_library" if external_pdk else category,
+            "actionable": not external_pdk,
+            "message": stripped[:500],
+            "count": 0,
+        })
         item["count"] += 1
     items = sorted(groups.values(), key=lambda item: (item["severity"] != "critical", -item["count"]))
     return {
         "schema": "opensemilab.log-diagnostics/v1",
         "critical_count": sum(item["count"] for item in items if item["severity"] == "critical"),
         "warning_count": sum(item["count"] for item in items if item["severity"] == "warning"),
+        "external_pdk_warning_count": sum(item["count"] for item in items if item["category"] == "pdk_library"),
         "groups": items[:100],
     }
 
@@ -495,6 +506,36 @@ def run_streaming_command(
     }
 
 
+def _artifact_payload(path: Path, relative: str) -> dict[str, Any]:
+    raw = path.read_bytes()
+    binary = path.suffix.lower() == ".gds"
+    return {
+        "name": relative,
+        "media_type": "application/octet-stream" if binary else "text/plain",
+        "encoding": "base64" if binary else "utf-8",
+        "content": b64encode(raw).decode("ascii") if binary else raw.decode("utf-8", errors="replace"),
+        "size_bytes": len(raw),
+    }
+
+
+def _compressed_artifact_payload(path: Path, relative: str) -> dict[str, Any] | None:
+    """Return a bounded gzip fallback for large final GDS/DEF views."""
+    size = path.stat().st_size
+    if path.suffix.lower() not in {".gds", ".def"} or size > MAX_COMPRESSED_ARTIFACT_SOURCE_BYTES:
+        return None
+    compressed = gzip.compress(path.read_bytes(), compresslevel=6, mtime=0)
+    if len(compressed) > MAX_ARTIFACT_BYTES:
+        return None
+    return {
+        "name": relative + ".gz",
+        "media_type": "application/gzip",
+        "encoding": "base64",
+        "content": b64encode(compressed).decode("ascii"),
+        "size_bytes": len(compressed),
+        "original_size_bytes": size,
+    }
+
+
 def physical_artifacts(job_dir: Path) -> list[dict[str, Any]]:
     """Collect a bounded set of portable final views from LibreLane."""
     candidates: list[Path] = []
@@ -507,25 +548,131 @@ def physical_artifacts(job_dir: Path) -> list[dict[str, Any]]:
     artifacts: list[dict[str, Any]] = []
     total = 0
     seen_names: set[str] = set()
+    omitted: list[dict[str, Any]] = []
     for path in candidates:
         size = path.stat().st_size
-        if size > MAX_ARTIFACT_BYTES or total + size > MAX_ARTIFACT_BUNDLE_BYTES:
-            continue
         relative = path.relative_to(job_dir).as_posix()
         if relative in seen_names:
             continue
         seen_names.add(relative)
-        raw = path.read_bytes()
-        binary = path.suffix.lower() == ".gds"
-        artifacts.append({
-            "name": relative,
-            "media_type": "application/octet-stream" if binary else "text/plain",
-            "encoding": "base64" if binary else "utf-8",
-            "content": b64encode(raw).decode("ascii") if binary else raw.decode("utf-8", errors="replace"),
-            "size_bytes": size,
-        })
-        total += size
+        if size <= MAX_ARTIFACT_BYTES and total + size <= MAX_ARTIFACT_BUNDLE_BYTES:
+            artifacts.append(_artifact_payload(path, relative))
+            total += size
+            continue
+        compressed = _compressed_artifact_payload(path, relative)
+        if compressed and total + compressed["size_bytes"] <= MAX_ARTIFACT_BUNDLE_BYTES:
+            artifacts.append(compressed)
+            total += compressed["size_bytes"]
+            continue
+        omitted.append({"name": relative, "size_bytes": size, "reason": "artifact_size_limit"})
+    manifest = {
+        "schema": "opensemilab.artifact-manifest/v1",
+        "embedded_count": len(artifacts),
+        "embedded_bytes": total,
+        "omitted": omitted,
+    }
+    artifacts.append(text_artifact("artifact-manifest.json", json.dumps(manifest, indent=2) + "\n", "application/json"))
     return artifacts
+
+
+def compact_def_layout(job_dir: Path) -> dict[str, Any] | None:
+    """Extract a bounded browser layout without embedding a potentially huge DEF."""
+    candidates = sorted(
+        (path for root in (job_dir / "final", job_dir / "runs") if root.exists() for path in root.rglob("*.def")),
+        key=lambda path: (0 if "final" in path.parts else 1, len(path.parts), str(path)),
+    )
+    if not candidates:
+        return None
+    path = candidates[0]
+    units = 1000
+    die: tuple[int, int, int, int] | None = None
+    components: list[dict[str, Any]] = []
+    component_count = 0
+    section = ""
+    entry = ""
+    layers: dict[str, list[dict[str, Any]]] = {}
+    lengths: dict[str, float] = {}
+    current_layer: str | None = None
+    previous: tuple[int, int] | None = None
+    total_segments = 0
+
+    def consume_component(value: str) -> None:
+        nonlocal component_count
+        count_match = re.search(r"^\s*COMPONENTS\s+(\d+)\s*;", value, re.IGNORECASE)
+        if count_match:
+            component_count = int(count_match.group(1))
+        if len(components) >= 6000 or die is None:
+            return
+        match = re.search(r"-\s+(\S+)\s+\S+[\s\S]*?\+\s+(?:PLACED|FIXED)\s*\(\s*(-?\d+)\s+(-?\d+)\s*\)", value, re.IGNORECASE)
+        if match:
+            x0, y0, _, _ = die
+            components.append({"name": match.group(1), "x": (int(match.group(2)) - x0) / units, "y": (int(match.group(3)) - y0) / units})
+
+    with path.open("r", encoding="utf-8", errors="replace") as stream:
+        for line in stream:
+            units_match = re.search(r"UNITS\s+DISTANCE\s+MICRONS\s+(\d+)", line, re.IGNORECASE)
+            if units_match:
+                units = max(1, int(units_match.group(1)))
+            die_match = re.search(r"DIEAREA\s*\(\s*(-?\d+)\s+(-?\d+)\s*\)\s*\(\s*(-?\d+)\s+(-?\d+)\s*\)", line, re.IGNORECASE)
+            if die_match:
+                die = tuple(int(die_match.group(index)) for index in range(1, 5))  # type: ignore[assignment]
+            upper = line.strip().upper()
+            if upper.startswith("COMPONENTS "):
+                section, entry = "components", line
+                if ";" in entry:
+                    consume_component(entry); entry = ""
+                continue
+            if upper == "END COMPONENTS":
+                if entry:
+                    consume_component(entry)
+                section, entry = "", ""
+                continue
+            if re.match(r"^(?:SPECIALNETS|NETS)\s+\d+\s*;", upper):
+                section, current_layer, previous = "routes", None, None
+                continue
+            if upper in {"END SPECIALNETS", "END NETS"}:
+                section, current_layer, previous = "", None, None
+                continue
+            if section == "components":
+                entry += line
+                if ";" in entry:
+                    consume_component(entry); entry = ""
+                continue
+            if section != "routes" or total_segments >= 16000 or die is None:
+                continue
+            if line.lstrip().startswith("-"):
+                current_layer, previous = None, None
+            layer_match = re.search(r"(?:\+\s*)?(?:ROUTED|NEW)\s+(\S+)", line, re.IGNORECASE)
+            if layer_match:
+                current_layer, previous = layer_match.group(1), None
+            if current_layer:
+                x0, y0, _, _ = die
+                for point in re.finditer(r"\(\s*(-?\d+|\*)\s+(-?\d+|\*)\s*\)", line):
+                    raw_x = previous[0] if point.group(1) == "*" and previous else int(point.group(1)) if point.group(1) != "*" else None
+                    raw_y = previous[1] if point.group(2) == "*" and previous else int(point.group(2)) if point.group(2) != "*" else None
+                    if raw_x is None or raw_y is None:
+                        continue
+                    current = (raw_x, raw_y)
+                    if previous and previous != current:
+                        segment = {"layer": current_layer, "x1": (previous[0] - x0) / units, "y1": (previous[1] - y0) / units, "x2": (raw_x - x0) / units, "y2": (raw_y - y0) / units}
+                        bucket = layers.setdefault(current_layer, [])
+                        if len(bucket) < 4000 and total_segments < 16000:
+                            bucket.append(segment)
+                            lengths[current_layer] = lengths.get(current_layer, 0.0) + abs(segment["x2"] - segment["x1"]) + abs(segment["y2"] - segment["y1"])
+                            total_segments += 1
+                    previous = current
+            if ";" in line:
+                current_layer, previous = None, None
+    if die is None:
+        return None
+    colors = ["#58d6ff", "#ffcb6b", "#ff7597", "#b89cff", "#72e7a9", "#ff995e", "#71a7ff", "#e2ef65", "#ef7dff", "#60e3db"]
+    x0, y0, x1, y1 = die
+    layer_items = [{"name": name, "color": colors[index % len(colors)], "segments": layers[name], "lengthUm": lengths[name]} for index, name in enumerate(sorted(layers))]
+    return {
+        "schema": "opensemilab.def-layout/v1", "source": path.relative_to(job_dir).as_posix(),
+        "width": (x1 - x0) / units, "height": (y1 - y0) / units,
+        "component_count": component_count or len(components), "components": components, "layers": layer_items,
+    }
 
 
 def text_artifact(name: str, content: str, media_type: str = "text/plain") -> dict[str, Any]:
@@ -651,10 +798,14 @@ def physical_summary(job_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
         "scl": config["STD_CELL_LIBRARY"],
         "die_area_um2": float(config["DIE_AREA"][2]) * float(config["DIE_AREA"][3]),
         "target_utilization_pct": float(config["FP_CORE_UTIL"]),
+        "clock_period_ns": float(config.get("CLOCK_PERIOD", 10.0)),
         "cell_count": None,
         "wns_ns": None,
         "tns_ns": None,
         "drc_violations": None,
+        "estimated_critical_path_ns": None,
+        "estimated_max_frequency_mhz": None,
+        "recommended_period_ns": None,
     }
     text_files = [path for root in (job_dir / "final", job_dir / "runs") if root.exists() for path in root.rglob("*") if path.is_file() and path.suffix.lower() in {".def", ".rpt", ".log", ".csv", ".json"}]
     patterns = {
@@ -689,7 +840,43 @@ def physical_summary(job_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
                         break
     if summary["drc_violations"] is None and drc_passed:
         summary["drc_violations"] = 0
+    if summary["wns_ns"] is not None:
+        critical_path = summary["clock_period_ns"] - summary["wns_ns"]
+        if critical_path > 0:
+            summary["estimated_critical_path_ns"] = critical_path
+            summary["estimated_max_frequency_mhz"] = 1000.0 / critical_path
+            if summary["wns_ns"] < 0:
+                summary["recommended_period_ns"] = math.ceil(critical_path * 1.05 * 2) / 2
     return summary
+
+
+def validate_physical_top(sources: dict[str, str], top: str, clock_port: str) -> None:
+    """Fail fast when the requested top/clock cannot be found in the supplied RTL."""
+    module_expression = re.compile(rf"\bmodule\s+{re.escape(top)}\b([\s\S]*?);", re.IGNORECASE)
+    for content in sources.values():
+        match = module_expression.search(re.sub(r"/\*[\s\S]*?\*/|//[^\n]*", "", content))
+        if not match:
+            continue
+        if not re.search(rf"\b{re.escape(clock_port)}\b", match.group(1)):
+            raise ValueError(
+                f"PHYSICAL PREFLIGHT ERROR: clock port '{clock_port}' is not declared by top module '{top}'. "
+                "Select the real clock input before starting the long RTL-to-GDSII flow."
+            )
+        return
+    raise ValueError(
+        f"PHYSICAL PREFLIGHT ERROR: top module '{top}' was not found in the supplied RTL sources."
+    )
+
+
+def physical_sdc(clock_port: str, clock_period: float) -> str:
+    """Create a minimal design-specific constraint shared by PnR and sign-off."""
+    uncertainty = max(0.05, min(0.5, clock_period * 0.005))
+    return (
+        "# Generated by OpenSemiLab. Add interface delays in a project-specific SDC when required.\n"
+        f"set clk_input {{{clock_port}}}\n"
+        f"create_clock -name {{{clock_port}}} -period {clock_period:g} [get_ports $clk_input]\n"
+        f"set_clock_uncertainty {uncertainty:g} [get_clocks {{{clock_port}}}]\n"
+    )
 
 
 def adapter_result(action: str, engine: str, job_id: str, result: dict[str, Any], artifacts: list[dict[str, Any]], **extra: Any) -> dict[str, Any]:
@@ -918,12 +1105,18 @@ def execute(
             clock_port = options.get("clock_port", "clk")
             if not isinstance(clock_port, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_$]*", clock_port):
                 raise ValueError("invalid clock port")
-            clock_period = float(options.get("clock_period_ns", 10.0))
+            clock_period = float(options.get("clock_period_ns", 25.0))
             die_width = float(options.get("die_width_um", 120.0))
             die_height = float(options.get("die_height_um", 120.0))
             utilization = float(options.get("core_utilization_pct", 40.0))
+            timing_effort = options.get("timing_effort", "balanced")
+            if timing_effort not in {"balanced", "aggressive"}:
+                raise ValueError("timing_effort must be balanced or aggressive")
             if not 0.1 <= clock_period <= 1000 or not 30 <= die_width <= 5000 or not 30 <= die_height <= 5000 or not 5 <= utilization <= 80:
                 raise ValueError("physical options are outside safe limits")
+            validate_physical_top(sources, top, clock_port)
+            sdc_content = physical_sdc(clock_port, clock_period)
+            (job_dir / "constraints.sdc").write_text(sdc_content, encoding="utf-8")
             config = {
                 "meta": {"version": 2, "flow": "Classic"},
                 "PDK": pdk,
@@ -932,10 +1125,21 @@ def execute(
                 "VERILOG_FILES": [f"dir::{name}" for name in source_names],
                 "CLOCK_PORT": clock_port,
                 "CLOCK_PERIOD": clock_period,
+                "PNR_SDC_FILE": "dir::constraints.sdc",
+                "SIGNOFF_SDC_FILE": "dir::constraints.sdc",
                 "FP_SIZING": "absolute",
                 "DIE_AREA": [0, 0, die_width, die_height],
                 "FP_CORE_UTIL": utilization,
+                "RUN_POST_GPL_DESIGN_REPAIR": True,
+                "RUN_POST_CTS_RESIZER_TIMING": True,
             }
+            if timing_effort == "aggressive":
+                config.update({
+                    "RUN_POST_GRT_DESIGN_REPAIR": True,
+                    "RUN_POST_GRT_RESIZER_TIMING": True,
+                    "PL_RESIZER_SETUP_SLACK_MARGIN": 0.1,
+                    "GRT_RESIZER_SETUP_SLACK_MARGIN": 0.05,
+                })
             (job_dir / "physical-config.json").write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
             command = [
                 binary,
@@ -961,12 +1165,20 @@ def execute(
                 artifacts = []
                 diagnostics.append({"phase": "artifact_collection", "error": f"{type(error).__name__}: {error}"})
             try:
+                layout = compact_def_layout(job_dir)
+                if layout:
+                    artifacts.insert(0, text_artifact("layout-summary.json", json.dumps(layout, separators=(",", ":")), "application/json"))
+            except Exception as error:
+                diagnostics.append({"phase": "layout_compaction", "error": f"{type(error).__name__}: {error}"})
+            try:
                 summary = physical_summary(job_dir, config)
             except Exception as error:
                 summary = {
                     "schema": "opensemilab.physical-summary/v1", "pdk": pdk, "scl": scl,
                     "die_area_um2": die_width * die_height, "target_utilization_pct": utilization,
-                    "cell_count": None, "wns_ns": None, "tns_ns": None, "drc_violations": None,
+                    "clock_period_ns": clock_period, "cell_count": None, "wns_ns": None, "tns_ns": None,
+                    "drc_violations": None, "estimated_critical_path_ns": None,
+                    "estimated_max_frequency_mhz": None, "recommended_period_ns": None,
                 }
                 diagnostics.append({"phase": "metric_parsing", "error": f"{type(error).__name__}: {error}"})
             log_diagnostics = classify_physical_log(result["output"])
@@ -980,6 +1192,7 @@ def execute(
             artifacts.insert(0, text_artifact("execution-diagnostics.json", json.dumps(diagnostic_payload, indent=2) + "\n", "application/json"))
             artifacts.insert(0, text_artifact("execution.log", result["output"]))
             artifacts.insert(0, text_artifact("physical-summary.json", summary_content, "application/json"))
+            artifacts.insert(0, text_artifact("constraints.sdc", sdc_content, "text/x-sdc"))
             artifacts.insert(0, {"name": "physical-config.json", "media_type": "application/json", "encoding": "utf-8", "content": json.dumps(config, indent=2) + "\n", "size_bytes": len(json.dumps(config))})
             return {
                 "job_id": job_id,
