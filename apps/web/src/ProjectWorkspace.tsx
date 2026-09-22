@@ -69,6 +69,7 @@ const ADAPTER_EXTENSIONS:Record<string,string[]>={
 type Action='lint'|'simulate'|'synthesize'|'spice'|'vhdl'|'formal'|'fpga'|'xyce'|'openems'|'xschem'|'cace'|'gds3d'
 type StageId='files'|'verification'|'simulation'|'physical'|'results'
 interface ToolState { available:boolean }
+interface PrivatePdkStatus { id:string;display_name:string;readiness:Record<string,boolean>;warnings:string[] }
 
 const ACTION_STAGE:Record<Action|'physical',StageId>={
   lint:'verification',synthesize:'verification',formal:'verification',fpga:'verification',
@@ -115,6 +116,7 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
   const [error,setError]=useState('')
   const [errorStage,setErrorStage]=useState<StageId|null>(null)
   const [tools,setTools]=useState<Record<string,ToolState>>({})
+  const [privatePdk,setPrivatePdk]=useState<PrivatePdkStatus|null>(null)
   const [integrations,setIntegrations]=useState<ToolIntegration[]>([])
   const [openSteps,setOpenSteps]=useState<Set<string>>(()=>new Set())
   const [historyOpen,setHistoryOpen]=useState(false)
@@ -184,6 +186,11 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
     } catch {setWorker('offline')}
   }
   useEffect(()=>{void refreshCapabilities()},[])
+  useEffect(()=>{
+    if(!project.pdk.startsWith('private:')) {setPrivatePdk(null);return}
+    const identifier=project.pdk.slice('private:'.length)
+    fetch('/api/v1/pdks').then(response=>response.ok?response.json():[]).then((items:PrivatePdkStatus[])=>setPrivatePdk(items.find(item=>item.id===identifier)??null)).catch(()=>setPrivatePdk(null))
+  },[project.pdk])
   useEffect(()=>{
     const manifest=readManifest(project)
     setFpgaTop(String(manifest.execution?.fpga_top??manifest.execution?.rtl_top??'top'))
@@ -397,6 +404,7 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
   const toggleStep=(id:StageId)=>{setActiveStage(id);setOpenSteps(current=>{const next=new Set(current);next.has(id)?next.delete(id):next.add(id);return next})}
   const goStep=(id:StageId)=>{setActiveStage(id);setOpenSteps(current=>new Set(current).add(id));window.setTimeout(()=>document.getElementById(`wizard-${id}`)?.scrollIntoView({behavior:'smooth',block:'start'}),0)}
   const dockResult=activeStage==='results'?result:stageResults[activeStage]
+  const physicalSupported=['sky130A','gf180mcuD'].includes(project.pdk)||Boolean(privatePdk?.readiness.physical)
   const stageLabel:Record<StageId,string>={files:es?'Diseño':'Design',verification:es?'Verificación':'Verification',simulation:es?'Simulación':'Simulation',physical:'GDSII',results:es?'Resultados':'Results'}
 
   return <section className="project-workspace">
@@ -420,7 +428,7 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
       <section className="adapter-hub"><div className="adapter-hub-heading"><div><span>{es?'SIMULACIÓN ESPECIALIZADA':'SPECIALIZED SIMULATION'}</span><b>Xyce · openEMS · Xschem · CACE</b></div><small>{es?'Los controles se habilitan al detectar entradas compatibles.':'Controls become available when compatible inputs are detected.'}</small></div><div className="adapter-grid">{renderAdapterCards('simulation')}</div></section>
     </WizardStep>
     <WizardStep id="physical" number="04" title={es?'Implementación física':'Physical implementation'} summary="RTL → GDSII · LibreLane / OpenROAD" open={openSteps.has('physical')} onToggle={()=>toggleStep('physical')} status={physicalResult?(physicalResult.summary?.signoff_status?.toUpperCase()??(physicalResult.success?'PASS':'FAIL')):undefined}>
-      {rtlSources.length>0&&['sky130A','gf180mcuD'].includes(project.pdk)?<div className="physical-panel">
+      {rtlSources.length>0&&physicalSupported?<div className="physical-panel">
         <div className="physical-toolchain">LibreLane · Yosys · OpenROAD · OpenSTA · Magic · Netgen · KLayout</div>
         <div className="physical-steps">{['synthesis','floorplan','placement','cts','routing','signoff'].map((stage,index)=>{const current=['synthesis','floorplan','placement','cts','routing','signoff'].indexOf(physicalStage);const label=stage==='cts'?'CTS':stage==='signoff'?'Sign-off':stage[0].toUpperCase()+stage.slice(1);return <i className={physicalResult?.success||running==='physical'&&current>index?'done':running==='physical'&&physicalStage===stage?'active':''} key={stage}><span>{String(index+1).padStart(2,'0')}</span>{label}</i>})}</div>
         <div className="physical-config">
@@ -437,7 +445,7 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
         {physicalResult?.summary?.recommended_die_width_um&&physicalResult.summary.recommended_die_height_um&&<p className="physical-recommendation"><span>{es?'Última recomendación':'Latest recommendation'}: {physicalResult.summary.recommended_die_width_um} × {physicalResult.summary.recommended_die_height_um} µm</span><button onClick={()=>{setFloorplanMode('manual');setDieWidth(physicalResult.summary!.recommended_die_width_um!);setDieHeight(physicalResult.summary!.recommended_die_height_um!)}}>{es?'Aplicar manualmente':'Apply manually'}</button></p>}
         {physicalStatus&&<p className="physical-status" aria-live="polite"><span className={running==='physical'?'status-pulse':''}/>{physicalStatus}{running==='physical'?` · ${physicalElapsed}s`:''}{running==='physical'&&physicalJobId&&<button className="cancel-job" onClick={cancelPhysical}>{es?'Cancelar':'Cancel'}</button>}</p>}
         {physicalGds&&<div className="gds3d-action"><div><b>{es?'GDSII listo':'GDSII ready'}</b><small>{physicalGds.name}</small></div><button disabled={!!running||!tools.gds3d?.available} onClick={()=>runAdapter('gds3d')}>{running==='gds3d'?(es?'Validando…':'Validating…'):(es?'Validar en GDS3D':'Validate in GDS3D')}<small>{es?'El visor interactivo está en Resultados':'Interactive viewer is in Results'}</small></button></div>}
-      </div>:<div className="adapter-message">{es?'Disponible para proyectos RTL con SKY130 o GF180.':'Available for RTL projects using SKY130 or GF180.'}</div>}
+      </div>:<div className="adapter-message">{project.pdk.startsWith('private:')?(privatePdk?(es?'El PDK privado está asociado al proyecto, pero todavía necesita un adaptador LibreLane/OpenPDKs validado para ejecutar RTL→GDSII. Revise su matriz en Tecnologías privadas.':'The private PDK is linked to this project, but it still needs a validated LibreLane/OpenPDKs adapter to run RTL→GDSII. Review its matrix under Private technologies.'):(es?'El PDK privado referenciado ya no está instalado en este servidor.':'The referenced private PDK is no longer installed on this server.')):(es?'Disponible para proyectos RTL con SKY130, GF180 o un PDK privado con adaptador validado.':'Available for RTL projects using SKY130, GF180, or a private PDK with a validated adapter.')}</div>}
     </WizardStep>
     <WizardStep id="results" number="05" title={es?'Resultados y análisis':'Results and analysis'} summary={es?'Gráficas, ondas, layout, consola y artefactos':'Plots, waveforms, layout, console, and artifacts'} open={openSteps.has('results')} onToggle={()=>toggleStep('results')} status={result?.formal_status==='unknown'||result?.summary?.signoff_status==='review'?'REVIEW':result?.summary?.signoff_status==='fail'?'FAIL':result?.success?'PASS':result?'FAIL':undefined}>{error&&<p className="error">{error}</p>}{result?.simulation&&result.simulation.plots.length>0&&<SpiceViewer data={result.simulation} locale={locale}/>} {waveform&&<WaveformViewer content={waveform.content} locale={locale}/>} {dashboardResult?.summary&&<PhysicalDashboard summary={dashboardResult.summary} artifacts={dashboardResult.artifacts} locale={locale} onApplyRecommendedDie={(width,height)=>{setDieWidth(width);setDieHeight(height);goStep('physical')}}/>} {result?<div className="console"><div className="console-header"><span>{result.engine} · {result.duration_ms} ms{result.pdk?` · ${result.pdk}`:''}</span><b className={result.formal_status==='unknown'?'unknown':result.success?'success':'failed'}>{result.formal_status==='unknown'?(es?'INCONCLUSO':'INCONCLUSIVE'):result.success?(es?'CORRECTO':'PASSED'):(es?'FALLÓ':'FAILED')} · EXIT {result.exit_code}</b></div><details className="console-output" open={!result.success}><summary>{es?'Registro de ejecución':'Execution log'}</summary><div className="console-tools"><button onClick={()=>selectConsole('result-console-output')}>{es?'Seleccionar todo':'Select all'}</button><button onClick={()=>void copyConsole('result-console-output')}>{copiedConsole==='result-console-output'?(es?'Copiado':'Copied'):(es?'Copiar todo':'Copy all')}</button></div><pre id="result-console-output">{result.output||(es?'La herramienta terminó sin salida.':'The tool completed without output.')}</pre></details>{result.artifacts.length>0&&<ArtifactBrowser artifacts={result.artifacts} locale={locale} onDownload={downloadArtifact}/>}</div>:!error&&!dashboardResult&&<div className="empty-results">{es?'Ejecute una etapa para ver aquí todos sus resultados.':'Run a stage to see all of its results here.'}</div>}</WizardStep>
     </div>

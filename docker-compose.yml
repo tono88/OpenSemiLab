@@ -6,6 +6,9 @@ services:
     environment:
       OPENSEMILAB_CORS_ORIGINS: http://localhost:5173
       OPENSEMILAB_EDA_WORKER_URL: http://eda-worker:9000
+      OPENSEMILAB_PDK_ROOT: /var/lib/opensemilab-pdks
+    volumes:
+      - opensemilab-pdks:/var/lib/opensemilab-pdks
     depends_on:
       eda-worker:
         condition: service_healthy
@@ -28,6 +31,7 @@ services:
       # Physical runs can exceed 1.5 GB before final GDS/DEF views are copied.
       # Keep jobs on a Docker volume and refuse to start without a safe reserve.
       OPENSEMILAB_WORK_ROOT: /var/lib/opensemilab-jobs
+      OPENSEMILAB_PRIVATE_PDK_ROOT: /var/lib/opensemilab-pdks
       OPENSEMILAB_PHYSICAL_MIN_START_FREE_MB: "3072"
       OPENSEMILAB_PHYSICAL_MIN_RUNTIME_FREE_MB: "512"
     healthcheck:
@@ -38,6 +42,7 @@ services:
     read_only: true
     volumes:
       - opensemilab-jobs:/var/lib/opensemilab-jobs
+      - opensemilab-pdks:/var/lib/opensemilab-pdks:ro
     tmpfs:
       - /tmp:size=512m,mode=1777
     cap_drop:
@@ -50,3 +55,4 @@ services:
 
 volumes:
   opensemilab-jobs:
+  opensemilab-pdks:

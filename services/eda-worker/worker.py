@@ -118,17 +118,79 @@ PHYSICAL_SCLS = {
     "sky130A": "sky130_fd_sc_hd",
     "gf180mcuD": "gf180mcu_fd_sc_mcu7t5v0",
 }
+PRIVATE_PDK_ID = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")
+PRIVATE_PDK_ROOT = Path(os.getenv("OPENSEMILAB_PRIVATE_PDK_ROOT", "/var/lib/opensemilab-pdks"))
+
+
+def private_physical_targets() -> dict[str, dict[str, Any]]:
+    targets: dict[str, dict[str, Any]] = {}
+    if not PRIVATE_PDK_ROOT.is_dir():
+        return targets
+    for manifest_path in PRIVATE_PDK_ROOT.glob("*/manifest.json"):
+        identifier = manifest_path.parent.name
+        if not PRIVATE_PDK_ID.fullmatch(identifier):
+            continue
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            adapter = manifest.get("adapter")
+            targets[f"private:{identifier}"] = {
+                "scl": adapter.get("scl") if isinstance(adapter, dict) else None,
+                "available": bool(manifest.get("readiness", {}).get("physical") and adapter),
+            }
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+            continue
+    return targets
+
+
+def resolve_physical_target(requested_pdk: Any, public_pdk_root: str) -> tuple[str, str, str]:
+    if requested_pdk in PHYSICAL_SCLS:
+        return requested_pdk, PHYSICAL_SCLS[requested_pdk], public_pdk_root
+    if not isinstance(requested_pdk, str) or not requested_pdk.startswith("private:"):
+        raise ValueError("physical implementation requires a supported public or registered private PDK")
+    identifier = requested_pdk.removeprefix("private:")
+    if not PRIVATE_PDK_ID.fullmatch(identifier):
+        raise ValueError("invalid private PDK identifier")
+    pdk_dir = (PRIVATE_PDK_ROOT / identifier).resolve()
+    try:
+        pdk_dir.relative_to(PRIVATE_PDK_ROOT.resolve())
+    except ValueError as error:
+        raise ValueError("invalid private PDK location") from error
+    manifest_path = pdk_dir / "manifest.json"
+    if not manifest_path.is_file():
+        raise RuntimeError("The selected private PDK is not installed on this worker")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise RuntimeError("The selected private PDK registry entry is unreadable") from error
+    adapter = manifest.get("adapter")
+    if not manifest.get("readiness", {}).get("physical") or not isinstance(adapter, dict):
+        raise RuntimeError("The selected private PDK has no validated LibreLane/OpenPDKs adapter")
+    pdk_name = adapter.get("pdk")
+    scl = adapter.get("scl")
+    relative_root = adapter.get("pdk_root")
+    if not all(isinstance(value, str) for value in (pdk_name, scl, relative_root)):
+        raise RuntimeError("The private PDK adapter metadata is incomplete")
+    adapter_root = (pdk_dir / "content" / relative_root).resolve()
+    try:
+        adapter_root.relative_to((pdk_dir / "content").resolve())
+    except ValueError as error:
+        raise RuntimeError("The private PDK adapter points outside its isolated registry entry") from error
+    if not (adapter_root / pdk_name / "libs.ref" / scl).is_dir():
+        raise RuntimeError("The private PDK standard-cell library is missing from its read-only mount")
+    return pdk_name, scl, str(adapter_root)
 
 
 def physical_targets(pdk_root: str | None) -> dict[str, dict[str, Any]]:
     root = Path(pdk_root) if pdk_root else None
-    return {
+    targets = {
         pdk: {
             "scl": scl,
             "available": bool(root and (root / pdk / "libs.ref" / scl).is_dir()),
         }
         for pdk, scl in PHYSICAL_SCLS.items()
     }
+    targets.update(private_physical_targets())
+    return targets
 
 
 def capabilities() -> dict[str, Any]:
@@ -1408,11 +1470,9 @@ def execute(
             options = payload.get("physical")
             if not isinstance(options, dict):
                 raise ValueError("physical options are required")
-            pdk = options.get("pdk")
-            if pdk not in PHYSICAL_SCLS:
-                raise ValueError("physical implementation currently supports sky130A and gf180mcuD")
-            scl = PHYSICAL_SCLS[pdk]
-            scl_root = Path(pdk_root) / pdk / "libs.ref" / scl
+            requested_pdk = options.get("pdk")
+            pdk, scl, selected_pdk_root = resolve_physical_target(requested_pdk, pdk_root)
+            scl_root = Path(selected_pdk_root) / pdk / "libs.ref" / scl
             if not scl_root.is_dir():
                 libraries_root = scl_root.parent
                 available = sorted(path.name for path in libraries_root.iterdir() if path.is_dir()) if libraries_root.is_dir() else []
@@ -1475,7 +1535,7 @@ def execute(
             (job_dir / "physical-config.json").write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
             command = [
                 binary,
-                "--pdk-root", pdk_root,
+                "--pdk-root", selected_pdk_root,
                 "--pdk", pdk,
                 "--scl", scl,
                 "--save-views-to", "final",
@@ -1554,7 +1614,8 @@ def execute(
                 "job_id": job_id,
                 "action": action,
                 "engine": "LibreLane/OpenROAD",
-                "pdk": pdk,
+                "pdk": requested_pdk,
+                "resolved_pdk": pdk,
                 "scl": scl,
                 "summary": summary,
                 "diagnostics": diagnostic_payload,
