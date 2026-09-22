@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import ProjectWorkspace from './ProjectWorkspace'
-import { createProject, loadProjects, saveProjects, type StoredProject } from './projectStore'
+import { createProject, loadProjects, normalizeProjectExecution, saveProjects, type StoredProject } from './projectStore'
 
 interface Template { id: string; title: string; description: string; outputs: string[]; recommended_pdk: string; tags: string[] }
 interface Stage { id: string; title: string; purpose: string; tools: string[]; output: string; status: 'ready' | 'adapter_pending' | 'optional' }
@@ -74,6 +74,7 @@ export default function DesignStudio({ locale }: { locale: 'es' | 'en' }) {
 
   function acceptImportedProject(imported:StoredProject) {
     if(!imported.name||!imported.kind||!Array.isArray(imported.files)) throw new Error()
+    imported=normalizeProjectExecution(imported)
     imported.id=projects.some(project=>project.id===imported.id)?crypto.randomUUID():(imported.id||crypto.randomUUID())
     imported.updatedAt=new Date().toISOString()
     const next=[imported,...projects];setProjects(next);saveProjects(next);openProject(imported)
