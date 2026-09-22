@@ -596,11 +596,50 @@ def _signoff_category(path: Path) -> str:
         return "netlists"
     if suffix in {".sdc", ".sdf", ".spef", ".lib"}:
         return "timing"
+    if suffix in {".cdl", ".spice"}:
+        return "models"
     if suffix in {".rpt", ".log", ".csv"} or any(token in lower for token in ("drc", "lvs", "antenna", "metrics", "summary")):
         return "reports"
     if suffix in {".json", ".yaml", ".yml", ".tcl"}:
         return "configuration"
     return "other"
+
+
+def integration_manifest(job_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
+    """Inventory final integration views with stable hashes and their intended role."""
+    allowed = {".gds", ".def", ".lef", ".oas", ".oasis", ".v", ".sv", ".sdc", ".sdf", ".spef", ".lib", ".cdl", ".spice", ".rpt", ".log", ".csv", ".json", ".yaml", ".yml", ".tcl"}
+    candidates = sorted(
+        (path for root in (job_dir / "final", job_dir / "runs") if root.exists() for path in root.rglob("*") if path.is_file() and path.suffix.lower() in allowed),
+        key=lambda path: (0 if "final" in path.parts else 1, len(path.parts), str(path)),
+    )
+    files: list[dict[str, Any]] = []
+    seen_content: set[str] = set()
+    for path in candidates:
+        raw = path.read_bytes()
+        digest = hashlib.sha256(raw).hexdigest()
+        if digest in seen_content:
+            continue
+        seen_content.add(digest)
+        files.append({
+            "path": path.relative_to(job_dir).as_posix(),
+            "category": _signoff_category(path),
+            "role": {
+                ".gds": "manufacturing_layout", ".oas": "manufacturing_layout", ".oasis": "manufacturing_layout",
+                ".lef": "abstract_layout", ".def": "placed_routed_layout", ".v": "logical_netlist", ".sv": "logical_netlist",
+                ".sdc": "timing_constraints", ".sdf": "timing_delays", ".spef": "parasitics", ".lib": "timing_power_model",
+                ".cdl": "lvs_netlist", ".spice": "circuit_model",
+            }.get(path.suffix.lower(), "evidence"),
+            "size_bytes": len(raw),
+            "sha256": digest,
+        })
+    return {
+        "schema": "opensemilab.integration-manifest/v1",
+        "design": config.get("DESIGN_NAME"),
+        "pdk": config.get("PDK"),
+        "standard_cell_library": config.get("STD_CELL_LIBRARY"),
+        "handoff_level": "hardened_block",
+        "files": files,
+    }
 
 
 def signoff_bundle(
@@ -610,9 +649,11 @@ def signoff_bundle(
     summary_content: str,
     diagnostics_content: str,
     execution_log: str,
+    readiness_content: str = "{}\n",
+    manifest_content: str = "{}\n",
 ) -> dict[str, Any] | None:
     """Create one compressed, categorized handoff without the JSON artifact limits."""
-    allowed = {".gds", ".def", ".lef", ".oas", ".oasis", ".v", ".sv", ".sdc", ".sdf", ".spef", ".lib", ".rpt", ".log", ".csv", ".json", ".yaml", ".yml", ".tcl"}
+    allowed = {".gds", ".def", ".lef", ".oas", ".oasis", ".v", ".sv", ".sdc", ".sdf", ".spef", ".lib", ".cdl", ".spice", ".rpt", ".log", ".csv", ".json", ".yaml", ".yml", ".tcl"}
     candidates = sorted(
         (path for root in (job_dir / "final", job_dir / "runs") if root.exists() for path in root.rglob("*") if path.is_file() and path.suffix.lower() in allowed),
         key=lambda path: (0 if "final" in path.parts else 1, len(path.parts), str(path)),
@@ -625,12 +666,16 @@ def signoff_bundle(
             "configuration/physical-config.json": config_content,
             "timing/constraints.sdc": sdc_content,
             "reports/physical-summary.json": summary_content,
+            "reports/tapeout-readiness.json": readiness_content,
+            "configuration/integration-manifest.json": manifest_content,
             "reports/execution-diagnostics.json": diagnostics_content,
             "logs/execution.log": execution_log,
         }
+        checksums: list[str] = []
         for name, content in generated.items():
             archive.writestr(name, content)
             used_names.add(name)
+            checksums.append(f"{hashlib.sha256(content.encode('utf-8')).hexdigest()}  {name}")
         for path in candidates:
             raw = path.read_bytes()
             digest = hashlib.sha256(raw).hexdigest()
@@ -644,6 +689,8 @@ def signoff_bundle(
                 destination = f"{_signoff_category(path)}/{relative}"
             used_names.add(destination)
             archive.writestr(destination, raw)
+            checksums.append(f"{digest}  {destination}")
+        archive.writestr("CHECKSUMS.sha256", "\n".join(sorted(checksums)) + "\n")
     raw_zip = output.getvalue()
     if len(raw_zip) > MAX_SIGNOFF_BUNDLE_BYTES:
         return None
@@ -943,6 +990,10 @@ def physical_summary(job_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
         "hold_worst_slack_ns": metric_value("timing__hold__ws"),
         "max_slew_violations": metric_value("design__max_slew_violation__count"),
         "max_cap_violations": metric_value("design__max_cap_violation__count"),
+        "max_fanout_violations": metric_value("design__max_fanout_violation__count"),
+        "setup_violations": metric_value("timing__setup__violations", "timing__setup_violation__count"),
+        "hold_violations": metric_value("timing__hold__violations", "timing__hold_violation__count"),
+        "unmapped_cells": metric_value("design__instance__count__unmapped", "synthesis__unmapped_cell__count"),
         "lvs_errors": metric_value("design__lvs_error__count"),
         "antenna_violations": metric_value("route__antenna_violation__count"),
         "power_grid_violations": metric_value("design__power_grid_violation__count"),
@@ -956,8 +1007,10 @@ def physical_summary(job_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
         "signoff_status": "review",
         "production_ready": False,
         "handoff_level": "hardened_block",
+        "readiness_level": "implementation_review",
         "constraint_scope": "project_sdc" if (job_dir / ".opensemilab-project-sdc").exists() else "clock_only",
         "pdk_distribution_status": "experimental_open_pdk",
+        "tapeout_readiness": {},
     }
     text_files = [path for root in (job_dir / "final", job_dir / "runs") if root.exists() for path in root.rglob("*") if path.is_file() and path.suffix.lower() in {".def", ".rpt", ".log", ".csv", ".json"}]
     patterns = {
@@ -1031,7 +1084,10 @@ def physical_summary(job_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
     for key, label in (
         ("drc_violations", "DRC"), ("lvs_errors", "LVS"), ("antenna_violations", "antenna"),
         ("power_grid_violations", "power grid"), ("max_slew_violations", "maximum slew"),
-        ("max_cap_violations", "maximum capacitance"), ("critical_disconnected_pins", "critical disconnected pins"),
+        ("max_cap_violations", "maximum capacitance"), ("max_fanout_violations", "maximum fanout"),
+        ("setup_violations", "setup violations"), ("hold_violations", "hold violations"),
+        ("unmapped_cells", "unmapped cells"),
+        ("critical_disconnected_pins", "critical disconnected pins"),
     ):
         value = summary.get(key)
         if value is not None and value > 0:
@@ -1051,6 +1107,37 @@ def physical_summary(job_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
     summary["signoff_blockers"] = blockers
     summary["signoff_warnings"] = warnings
     summary["signoff_status"] = "fail" if blockers else "review" if warnings else "pass"
+    def zero_check(identifier: str, label: str, value: float | None, evidence: str) -> dict[str, str]:
+        return {"id": identifier, "label": label, "status": "review" if value is None else "pass" if value == 0 else "fail", "evidence": evidence}
+
+    timing_known = summary["wns_ns"] is not None and summary["tns_ns"] is not None
+    electrical_values = [summary["max_slew_violations"], summary["max_cap_violations"], summary["max_fanout_violations"]]
+    checks = [
+        zero_check("synthesis_integrity", "Synthesis integrity", summary["unmapped_cells"], f"{summary['unmapped_cells']} unmapped cells"),
+        {"id": "sta_setup", "label": "Setup timing", "status": "review" if not timing_known else "pass" if summary["wns_ns"] >= 0 and summary["tns_ns"] >= 0 else "fail", "evidence": f"WNS {summary['wns_ns']} ns; TNS {summary['tns_ns']} ns"},
+        {"id": "sta_hold", "label": "Hold timing", "status": "review" if summary["hold_worst_slack_ns"] is None and summary["hold_violations"] is None else "pass" if (summary["hold_worst_slack_ns"] is None or summary["hold_worst_slack_ns"] >= 0) and (summary["hold_violations"] is None or summary["hold_violations"] == 0) else "fail", "evidence": f"worst slack {summary['hold_worst_slack_ns']} ns; {summary['hold_violations']} violations"},
+        {"id": "electrical", "label": "Slew, capacitance and fanout", "status": "review" if any(value is None for value in electrical_values) else "pass" if sum(electrical_values) == 0 else "fail", "evidence": f"slew {summary['max_slew_violations']}; cap {summary['max_cap_violations']}; fanout {summary['max_fanout_violations']}"},
+        zero_check("drc", "Design-rule check", summary["drc_violations"], f"{summary['drc_violations']} violations"),
+        zero_check("lvs", "Layout versus schematic", summary["lvs_errors"], f"{summary['lvs_errors']} errors"),
+        zero_check("antenna", "Antenna", summary["antenna_violations"], f"{summary['antenna_violations']} violations"),
+        zero_check("power_grid", "Power-grid connectivity", summary["power_grid_violations"], f"{summary['power_grid_violations']} violations"),
+        {"id": "constraints", "label": "Project timing constraints", "status": "pass" if summary["constraint_scope"] == "project_sdc" else "review", "evidence": summary["constraint_scope"]},
+        {"id": "handoff_views", "label": "Hardened-block integration views", "status": "pass" if not summary["missing_handoff_artifacts"] else "review", "evidence": "complete" if not summary["missing_handoff_artifacts"] else "missing: " + ", ".join(summary["missing_handoff_artifacts"])},
+        {"id": "rtl_equivalence", "label": "RTL-to-netlist equivalence", "status": "not_run", "evidence": "requires a dedicated equivalence run and reviewed black-box mapping"},
+        {"id": "cdc_rdc", "label": "CDC/RDC", "status": "not_run", "evidence": "requires clock/reset-domain constraints and a dedicated analysis tool"},
+        {"id": "ir_em", "label": "IR drop and electromigration", "status": "not_run", "evidence": "requires extracted power intent, activity and qualified models"},
+        {"id": "full_chip", "label": "Pad ring, ESD, seal ring and package", "status": "not_run", "evidence": "current result is a hardened core block"},
+        {"id": "foundry_release", "label": "Foundry-qualified decks and release", "status": "not_run", "evidence": "open PDK results are not a foundry production approval"},
+    ]
+    summary["readiness_level"] = "implementation_failed" if blockers else "hardened_block_candidate" if not summary["missing_handoff_artifacts"] else "implementation_review"
+    summary["tapeout_readiness"] = {
+        "schema": "opensemilab.tapeout-readiness/v1",
+        "status": "fail" if blockers else "review",
+        "level": summary["readiness_level"],
+        "production_ready": False,
+        "checks": checks,
+        "disclaimer": "Automated evidence summary only; foundry production release requires qualified decks, full-chip checks and authorized sign-off.",
+    }
     return summary
 
 
@@ -1413,12 +1500,22 @@ def execute(
                 "postprocessing_errors": diagnostics,
                 "log": log_diagnostics,
             }
+            try:
+                handoff_manifest = integration_manifest(job_dir, config)
+            except Exception as error:
+                handoff_manifest = {"schema": "opensemilab.integration-manifest/v1", "files": [], "error": f"{type(error).__name__}: {error}"}
+                diagnostics.append({"phase": "integration_manifest", "error": handoff_manifest["error"]})
             summary_content = json.dumps(summary, indent=2) + "\n"
+            readiness_content = json.dumps(summary.get("tapeout_readiness", {
+                "schema": "opensemilab.tapeout-readiness/v1", "status": "review", "production_ready": False,
+                "checks": [], "disclaimer": "Metric parsing failed; manual review is required.",
+            }), indent=2) + "\n"
+            manifest_content = json.dumps(handoff_manifest, indent=2) + "\n"
             diagnostics_content = json.dumps(diagnostic_payload, indent=2) + "\n"
             try:
                 bundle = signoff_bundle(
                     job_dir, json.dumps(config, indent=2) + "\n", sdc_content,
-                    summary_content, diagnostics_content, result["output"],
+                    summary_content, diagnostics_content, result["output"], readiness_content, manifest_content,
                 )
                 if bundle:
                     artifacts.insert(0, bundle)
@@ -1429,6 +1526,8 @@ def execute(
             artifacts.insert(0, text_artifact("execution-diagnostics.json", diagnostics_content, "application/json"))
             artifacts.insert(0, text_artifact("execution.log", result["output"]))
             artifacts.insert(0, text_artifact("physical-summary.json", summary_content, "application/json"))
+            artifacts.insert(0, text_artifact("tapeout-readiness.json", readiness_content, "application/json"))
+            artifacts.insert(0, text_artifact("integration-manifest.json", manifest_content, "application/json"))
             artifacts.insert(0, text_artifact("constraints.sdc", sdc_content, "text/x-sdc"))
             artifacts.insert(0, {"name": "physical-config.json", "media_type": "application/json", "encoding": "utf-8", "content": json.dumps(config, indent=2) + "\n", "size_bytes": len(json.dumps(config))})
             return {

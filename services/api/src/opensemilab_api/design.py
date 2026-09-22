@@ -7,7 +7,7 @@ ProjectKind = Literal[
     "microcontroller", "sensor_interface", "analog_block", "rf_frontend",
     "standard_cell", "fpga_prototype", "blank_project"
 ]
-PdkName = Literal["sky130A", "gf180mcuD", "ihp-sg13g2", "ihp-sg13cmos5l"]
+PdkName = Literal["sky130A", "gf180mcuD", "ihp-sg13g2", "ihp-sg13cmos5l", "gt2n"]
 ExperienceLevel = Literal["guided", "engineering", "expert"]
 
 
@@ -116,8 +116,8 @@ def make_plan(project: DesignRequest) -> DesignPlan:
                 item.status = "adapter_pending"
     if not digital_physical_supported and project.kind in {"microcontroller", "sensor_interface", "standard_cell"}:
         notice = (
-            "RTL and simulation tools remain executable, but automated RTL-to-GDSII is not connected for the selected IHP PDK. "
-            "Use SKY130/GF180 for the integrated digital flow, or treat this project as a migration scaffold."
+            "RTL and simulation tools remain executable, but automated RTL-to-GDSII is not connected for the selected PDK. "
+            "Use SKY130/GF180 for the integrated digital flow, or treat this project as a research/migration scaffold."
         )
     else:
         notice = (

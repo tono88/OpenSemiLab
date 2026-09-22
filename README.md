@@ -26,14 +26,14 @@ Open-source EDA and multiphysics tools are powerful, but they expose different i
 
 - Enter a dedicated **Design Studio** for complete IC and system projects.
 - Create a tool-aware design plan for microcontrollers/SoCs, smart sensor interfaces, analog blocks, RF front-ends, standard cells/IP, and FPGA prototypes.
-- Select SKY130, GF180MCU, IHP SG13G2, or IHP SG13CMOS5L with an explicit integration/maturity notice and generate a reproducible staged manifest. SKY130/GF180 have the integrated digital path; IHP paths remain partial or scaffold-only.
+- Select SKY130, GF180MCU, IHP SG13G2, IHP SG13CMOS5L, or the research-only GT2N profile with an explicit integration/maturity notice and generate a reproducible staged manifest. SKY130/GF180 have the integrated digital path; IHP paths remain partial or scaffold-only, and GT2N is not exposed as an executable physical route.
 - Map each stage to relevant IIC-OSIC-TOOLS engines while clearly distinguishing connected and pending adapters.
 - Edit SystemVerilog in the browser and run Verible/Verilator lint, Icarus Verilog simulation, and Yosys synthesis in IIC-OSIC-TOOLS.
 - Inspect automatically captured VCD waveforms with signal selection, zoom, and time-window navigation.
 - Simulate VHDL-2008 projects with GHDL and capture their VCD output through the same portable result contract.
 - Download the synthesized Yosys JSON netlist and inspect complete console output.
 - Plot normalized ngspice `.print` results for DC, transient, AC, and noise analyses when those vectors are present in the testbench.
-- Run LibreLane Classic asynchronously for SKY130/GF180 with automatic post-synthesis die sizing or expert manual dimensions, explore real DEF placement, density, 2D routing and an interactive exploded 3D layer view, review timing/area/DRC/LVS/electrical evidence in the sign-off center, and export a categorized sign-off ZIP plus individual artifacts.
+- Run LibreLane Classic asynchronously for SKY130/GF180 with automatic post-synthesis die sizing or expert manual dimensions, explore real DEF placement, density, 2D routing and an interactive exploded 3D layer view, review timing/area/DRC/LVS/electrical evidence plus an explicit production-readiness matrix, and export a categorized sign-off ZIP with SHA-256 checksums, an integration-view manifest and individual artifacts.
 - Keep a bounded local execution history and compare implementation and simulation results.
 - Navigate active projects through a compact five-stage vertical wizard, with an explicit IIC-OSIC integration matrix.
 - Replay numeric simulation traces as animations, zoom them, and pan horizontally by dragging or using the window control.
@@ -73,6 +73,8 @@ IIC-OSIC-TOOLS is a broad distribution rather than one engine. OpenSemiLab repor
 | Browser-native companion | GTKWave replacement, DEF/GDS physical explorer | Waveforms and physical layers are rendered interactively without exposing a remote desktop. |
 
 GUI editors, Python libraries, PDK managers and highly specialized utilities remain available in the underlying image but are not mislabeled as web integrations.
+
+GT2N is intentionally registered only as a research project profile. Its collateral and the engineering gates required before an executable adapter are documented in [docs/gt2n-integration.md](docs/gt2n-integration.md).
 
 The specialized adapter cards infer their entry point from project files and remain disabled until a compatible input exists:
 
