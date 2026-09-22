@@ -1,6 +1,7 @@
 import importlib.util
 import base64
 import io
+import json
 import tempfile
 import threading
 import time
@@ -19,6 +20,23 @@ SPEC.loader.exec_module(worker)
 
 
 class WorkerResultTests(unittest.TestCase):
+    def test_private_pdk_target_is_resolved_only_from_registry_manifest(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            identifier = "private-kit-12345678"
+            pdk_dir = root / identifier
+            library = pdk_dir / "content" / "adapter" / "local180" / "libs.ref" / "cells7t"
+            library.mkdir(parents=True)
+            (pdk_dir / "content" / "adapter" / "local180" / "libs.tech" / "librelane").mkdir(parents=True)
+            (pdk_dir / "manifest.json").write_text(json.dumps({
+                "readiness": {"physical": True},
+                "adapter": {"pdk_root": "adapter", "pdk": "local180", "scl": "cells7t"},
+            }), encoding="utf-8")
+            with patch.object(worker, "PRIVATE_PDK_ROOT", root):
+                pdk, scl, pdk_root = worker.resolve_physical_target(f"private:{identifier}", "/public")
+            self.assertEqual((pdk, scl), ("local180", "cells7t"))
+            self.assertEqual(Path(pdk_root), pdk_dir / "content" / "adapter")
+
     def test_streaming_command_has_no_total_limit_and_reports_liveness(self):
         updates = []
         with tempfile.TemporaryDirectory() as temporary:

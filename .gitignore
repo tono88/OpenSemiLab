@@ -11,3 +11,6 @@ coverage/
 *.log
 .idea/
 .vscode/
+private-pdks/
+opensemilab-pdks/
+.opensemilab/pdks/

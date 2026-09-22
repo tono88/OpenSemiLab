@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class PhysicalOptions(BaseModel):
-    pdk: Literal["sky130A", "gf180mcuD"]
+    pdk: str = Field(pattern=r"^(sky130A|gf180mcuD|private:[a-z0-9][a-z0-9-]{2,63})$")
     floorplan_mode: Literal["auto", "manual"] = "auto"
     clock_port: str = Field("clk", pattern=r"^[A-Za-z_][A-Za-z0-9_$]*$")
     clock_period_ns: float = Field(25.0, ge=0.1, le=1000)

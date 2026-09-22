@@ -1,6 +1,7 @@
 import io
 import json
 import tarfile
+import zipfile
 from unittest.mock import patch
 
 import httpx
@@ -56,6 +57,82 @@ def test_design_templates_cover_major_flows():
     assert response.status_code == 200
     kinds = {item["id"] for item in response.json()}
     assert {"microcontroller", "sensor_interface", "analog_block", "rf_frontend", "blank_project"} <= kinds
+
+
+def test_private_pdk_import_is_sanitized_and_deletable(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENSEMILAB_PDK_ROOT", str(tmp_path / "pdks"))
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr("views/cells.lib", "library(test) {}")
+        bundle.writestr("views/cells.v", "module INV(input A, output Y); assign Y=~A; endmodule")
+        bundle.writestr("views/cells.lef", "VERSION 5.8 ;\nEND LIBRARY")
+    response = client.post(
+        "/api/v1/pdks/import",
+        data={
+            "display_name": "Private teaching kit", "version": "1.0", "process": "demo",
+            "stack": "1P3M", "license_acknowledged": "true",
+        },
+        files=[("files", ("kit.zip", archive.getvalue(), "application/zip"))],
+    )
+    assert response.status_code == 201
+    pdk = response.json()
+    assert pdk["inventory"]["liberty"] == 1
+    assert pdk["readiness"]["synthesis_timing"] is True
+    assert pdk["readiness"]["physical"] is False
+    assert "adapter" not in pdk
+    assert "content" not in json.dumps(pdk).lower()
+
+    listed = client.get("/api/v1/pdks")
+    assert listed.status_code == 200
+    assert [item["id"] for item in listed.json()] == [pdk["id"]]
+    deleted = client.delete(f"/api/v1/pdks/{pdk['id']}")
+    assert deleted.status_code == 204
+    assert client.get("/api/v1/pdks").json() == []
+
+
+def test_private_pdk_import_rejects_zip_slip(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENSEMILAB_PDK_ROOT", str(tmp_path / "pdks"))
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr("../escape.lib", "not allowed")
+    response = client.post(
+        "/api/v1/pdks/import",
+        data={
+            "display_name": "Unsafe kit", "version": "1.0", "process": "demo",
+            "stack": "1P3M", "license_acknowledged": "true",
+        },
+        files=[("files", ("unsafe.zip", archive.getvalue(), "application/zip"))],
+    )
+    assert response.status_code == 422
+    assert "unsafe path" in response.json()["detail"].lower()
+
+
+def test_private_pdk_profile_resolves_relative_librelane_adapter(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENSEMILAB_PDK_ROOT", str(tmp_path / "pdks"))
+    archive = io.BytesIO()
+    profile = {
+        "schema": "opensemilab.pdk-profile/v1",
+        "pdk_root": ".",
+        "pdk": "local180",
+        "scl": "cells7t",
+    }
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr("opensemilab-pdk.json", json.dumps(profile))
+        bundle.writestr("local180/libs.ref/cells7t/lef/cells.lef", "VERSION 5.8 ;\nEND LIBRARY")
+        bundle.writestr("local180/libs.tech/librelane/config.tcl", "set ::env(PDK) local180")
+    response = client.post(
+        "/api/v1/pdks/import",
+        data={
+            "display_name": "Private physical kit", "version": "1.0", "process": "demo",
+            "stack": "1P3M", "license_acknowledged": "true",
+        },
+        files=[("files", ("physical.zip", archive.getvalue(), "application/zip"))],
+    )
+    assert response.status_code == 201
+    pdk = response.json()
+    assert pdk["readiness"]["physical"] is True
+    assert "adapter" not in pdk
+    assert "local180" not in json.dumps(pdk)
 
 
 def test_blank_project_returns_an_organized_optional_flow():

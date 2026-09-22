@@ -1,7 +1,7 @@
 import os
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from opensemilab_api import __version__
@@ -10,6 +10,7 @@ from opensemilab_api.eda import EdaRunRequest
 from opensemilab_api.engines import ENGINES
 from opensemilab_api.github_import import import_public_github_repository
 from opensemilab_api.models import EngineCapability, Experiment, SimulationResult
+from opensemilab_api.pdk_registry import delete_private_pdk, import_private_pdk, list_private_pdks
 from pydantic import BaseModel, Field
 
 app = FastAPI(
@@ -22,7 +23,7 @@ eda_worker_url = os.getenv("OPENSEMILAB_EDA_WORKER_URL", "http://localhost:9000"
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in origins],
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["Content-Type"],
 )
 
@@ -57,6 +58,38 @@ def import_github_project(request: GithubImportRequest) -> dict:
         return import_public_github_repository(request.url)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.get("/api/v1/pdks")
+def list_pdks() -> list[dict]:
+    return list_private_pdks()
+
+
+@app.post("/api/v1/pdks/import", status_code=201)
+async def import_pdk(
+    files: list[UploadFile] = File(...),
+    display_name: str = Form(...),
+    version: str = Form(...),
+    process: str = Form(...),
+    stack: str = Form(...),
+    license_acknowledged: bool = Form(False),
+) -> dict:
+    try:
+        return await import_private_pdk(
+            files, display_name, version, process, stack, license_acknowledged
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.delete("/api/v1/pdks/{pdk_id}", status_code=204)
+def delete_pdk(pdk_id: str) -> None:
+    try:
+        delete_private_pdk(pdk_id)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Private PDK was not found") from error
 
 
 @app.get("/api/v1/eda/capabilities")

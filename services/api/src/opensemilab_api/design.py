@@ -7,7 +7,7 @@ ProjectKind = Literal[
     "microcontroller", "sensor_interface", "analog_block", "rf_frontend",
     "standard_cell", "fpga_prototype", "blank_project"
 ]
-PdkName = Literal["sky130A", "gf180mcuD", "ihp-sg13g2", "ihp-sg13cmos5l", "gt2n"]
+PdkName = str
 ExperienceLevel = Literal["guided", "engineering", "expert"]
 
 
@@ -23,7 +23,7 @@ class DesignTemplate(BaseModel):
 class DesignRequest(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     kind: ProjectKind
-    pdk: PdkName
+    pdk: PdkName = Field(min_length=3, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")
     level: ExperienceLevel = "guided"
     language: Literal["systemverilog", "verilog", "vhdl", "schematic"] = "systemverilog"
 
@@ -114,7 +114,12 @@ def make_plan(project: DesignRequest) -> DesignPlan:
         for item in selected_stages:
             if item.id in {"physical", "signoff", "digital"}:
                 item.status = "adapter_pending"
-    if not digital_physical_supported and project.kind in {"microcontroller", "sensor_interface", "standard_cell"}:
+    if project.pdk.startswith("private:"):
+        notice = (
+            "The project references a locally registered private PDK. RTL and simulation remain available. "
+            "Physical implementation is enabled only when its private registry profile passes the LibreLane/OpenPDKs readiness checks."
+        )
+    elif not digital_physical_supported and project.kind in {"microcontroller", "sensor_interface", "standard_cell"}:
         notice = (
             "RTL and simulation tools remain executable, but automated RTL-to-GDSII is not connected for the selected PDK. "
             "Use SKY130/GF180 for the integrated digital flow, or treat this project as a research/migration scaffold."
