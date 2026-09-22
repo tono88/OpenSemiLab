@@ -25,14 +25,21 @@ services:
       # inactivity watchdog still stops a genuinely silent/stuck process.
       OPENSEMILAB_PHYSICAL_TIMEOUT: "0"
       OPENSEMILAB_PHYSICAL_IDLE_TIMEOUT: "3600"
+      # Physical runs can exceed 1.5 GB before final GDS/DEF views are copied.
+      # Keep jobs on a Docker volume and refuse to start without a safe reserve.
+      OPENSEMILAB_WORK_ROOT: /var/lib/opensemilab-jobs
+      OPENSEMILAB_PHYSICAL_MIN_START_FREE_MB: "3072"
+      OPENSEMILAB_PHYSICAL_MIN_RUNTIME_FREE_MB: "512"
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9000/health', timeout=3)"]
       interval: 10s
       timeout: 5s
       retries: 12
     read_only: true
+    volumes:
+      - opensemilab-jobs:/var/lib/opensemilab-jobs
     tmpfs:
-      - /tmp:size=1536m,mode=1777
+      - /tmp:size=512m,mode=1777
     cap_drop:
       - ALL
     security_opt:
@@ -40,3 +47,6 @@ services:
     pids_limit: 512
     mem_limit: 6g
     cpus: 4.0
+
+volumes:
+  opensemilab-jobs:
