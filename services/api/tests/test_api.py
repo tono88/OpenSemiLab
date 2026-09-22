@@ -162,4 +162,7 @@ def test_github_import_builds_portable_project_and_infers_top():
     assert project["name"] == "demo"
     assert project["kind"] == "fpga_prototype"
     assert "node_modules/ignored.v" not in paths
-    assert json.loads(manifest["content"])["execution"]["rtl_top"] == "demo"
+    imported_manifest = json.loads(manifest["content"])
+    assert imported_manifest["execution"]["rtl_top"] == "demo"
+    assert imported_manifest["physical"]["clock_period_ns"] == 25
+    assert imported_manifest["physical"]["timing_effort"] == "balanced"

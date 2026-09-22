@@ -6,10 +6,11 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 class PhysicalOptions(BaseModel):
     pdk: Literal["sky130A", "gf180mcuD"]
     clock_port: str = Field("clk", pattern=r"^[A-Za-z_][A-Za-z0-9_$]*$")
-    clock_period_ns: float = Field(10.0, ge=0.1, le=1000)
+    clock_period_ns: float = Field(25.0, ge=0.1, le=1000)
     die_width_um: float = Field(120.0, ge=30, le=5000)
     die_height_um: float = Field(120.0, ge=30, le=5000)
     core_utilization_pct: float = Field(40.0, ge=5, le=80)
+    timing_effort: Literal["balanced", "aggressive"] = "balanced"
 
 
 class EdaRunRequest(BaseModel):

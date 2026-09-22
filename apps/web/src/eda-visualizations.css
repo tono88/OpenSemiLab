@@ -159,6 +159,9 @@
 .signoff-checks strong { color: #66877a; font: 7px DM Mono; }
 .signoff-checks .pass strong { color: #45e6a6; }
 .signoff-checks .fail strong { color: #ff8c8c; }
+.timing-advisor { display: grid; grid-template-columns: auto minmax(0,1fr); gap: 14px; padding: 11px 13px; border-bottom: 1px solid #e8bd6930; background: #e8bd6908; }
+.timing-advisor b { color: #e8bd69; font: 8px DM Mono; }
+.timing-advisor span { color: #9ab6ab; font: 8px/1.5 DM Mono; }
 .layer-metrics { overflow-x: auto; }
 .layer-metrics table { width: 100%; min-width: 590px; border-collapse: collapse; }
 .layer-metrics th,

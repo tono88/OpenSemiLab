@@ -60,7 +60,7 @@ const executionByKind:Record<string,Record<string,string>>={
   blank_project:{},
 }
 
-const defaultPhysical={clock_port:'clk',clock_period_ns:10,die_width_um:120,die_height_um:120,core_utilization_pct:40}
+const defaultPhysical={clock_port:'clk',clock_period_ns:25,die_width_um:120,die_height_um:120,core_utilization_pct:40,timing_effort:'balanced'}
 const manifestObject = (name:string,kind:string,pdk:string) => ({schema:'opensemilab.project/v3',name,kind,pdk,execution:executionByKind[kind]??{},physical:defaultPhysical})
 const manifest = (name:string, kind:string, pdk:string) => JSON.stringify(manifestObject(name,kind,pdk),null,2)+'\n'
 

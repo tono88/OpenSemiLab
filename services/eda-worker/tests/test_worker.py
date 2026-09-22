@@ -141,6 +141,48 @@ Index   v-sweep   v(a)       v(y)
         self.assertEqual(summary["tns_ns"], -1.75)
         self.assertEqual(summary["drc_violations"], 3)
         self.assertEqual(summary["die_area_um2"], 12000)
+        self.assertAlmostEqual(summary["estimated_critical_path_ns"], 10.125)
+        self.assertEqual(summary["recommended_period_ns"], 11.0)
+
+    def test_physical_sdc_and_preflight_use_the_selected_clock(self):
+        sources = {"rtl/top.sv": "module top(input logic clk, input logic resetn); endmodule\n"}
+        worker.validate_physical_top(sources, "top", "clk")
+        sdc = worker.physical_sdc("clk", 25.0)
+        self.assertIn("create_clock -name {clk} -period 25", sdc)
+        self.assertIn("set_clock_uncertainty 0.125", sdc)
+        with self.assertRaisesRegex(ValueError, "clock port 'missing'"):
+            worker.validate_physical_top(sources, "top", "missing")
+
+    def test_compact_def_layout_keeps_a_bounded_visualization(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            job = Path(temporary)
+            final = job / "final"
+            final.mkdir()
+            (final / "top.def").write_text(
+                "VERSION 5.8 ;\nUNITS DISTANCE MICRONS 1000 ;\nDIEAREA ( 0 0 ) ( 120000 100000 ) ;\n"
+                "COMPONENTS 1 ;\n- cpu sky130_cell + PLACED ( 1000 2000 ) N ;\nEND COMPONENTS\n"
+                "NETS 1 ;\n- clk + ROUTED met1 ( 0 0 ) ( 1000 * ) ( * 2000 ) ;\nEND NETS\nEND DESIGN\n",
+                encoding="utf-8",
+            )
+            layout = worker.compact_def_layout(job)
+
+        self.assertIsNotNone(layout)
+        self.assertEqual(layout["width"], 120)
+        self.assertEqual(layout["component_count"], 1)
+        self.assertEqual(layout["components"][0]["name"], "cpu")
+        self.assertEqual(len(layout["layers"][0]["segments"]), 2)
+
+    def test_large_def_is_embedded_as_gzip_with_manifest(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            job = Path(temporary)
+            final = job / "final"
+            final.mkdir()
+            (final / "top.def").write_bytes(b"A" * 1024)
+            with patch.object(worker, "MAX_ARTIFACT_BYTES", 100), patch.object(worker, "MAX_ARTIFACT_BUNDLE_BYTES", 1000):
+                artifacts = worker.physical_artifacts(job)
+
+        self.assertTrue(any(item["name"] == "final/top.def.gz" for item in artifacts))
+        self.assertTrue(any(item["name"] == "artifact-manifest.json" for item in artifacts))
 
     def test_physical_summary_ignores_lone_exponent_marker_and_reads_scientific_notation(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -209,6 +251,15 @@ Index   v-sweep   v(a)       v(y)
         stage = worker.detect_physical_stage("Yosys synthesis complete\nOpenROAD global placement\nClock tree synthesis")
         self.assertEqual(stage["stage"], "cts")
         self.assertEqual(stage["tool"], "OpenROAD")
+
+    def test_physical_log_separates_known_pdk_library_warnings(self):
+        diagnostics = worker.classify_physical_log(
+            "[WARNING STA-1140] library sky130_fd_io already exists\n"
+            "[WARNING] max slew violation in user logic\n"
+        )
+        self.assertEqual(diagnostics["external_pdk_warning_count"], 1)
+        pdk_group = next(item for item in diagnostics["groups"] if item["category"] == "pdk_library")
+        self.assertFalse(pdk_group["actionable"])
 
     def test_background_failure_keeps_live_log_and_diagnostic_artifacts(self):
         job_id = "diagnostic01"
