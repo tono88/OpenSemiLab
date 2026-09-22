@@ -9,16 +9,18 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 import threading
 import time
 import uuid
+from collections import deque
 from base64 import b64encode
 from base64 import b64decode
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Callable
 
 HOST = "0.0.0.0"
 PORT = int(os.getenv("OPENSEMILAB_WORKER_PORT", "9000"))
@@ -26,7 +28,8 @@ WORK_ROOT = Path(os.getenv("OPENSEMILAB_WORK_ROOT", "/tmp/opensemilab-jobs"))
 MAX_BODY = 4_500_000
 MAX_OUTPUT = 200_000
 TIMEOUT_SECONDS = int(os.getenv("OPENSEMILAB_JOB_TIMEOUT", "90"))
-PHYSICAL_TIMEOUT_SECONDS = int(os.getenv("OPENSEMILAB_PHYSICAL_TIMEOUT", "1800"))
+PHYSICAL_TIMEOUT_SECONDS = int(os.getenv("OPENSEMILAB_PHYSICAL_TIMEOUT", "0"))
+PHYSICAL_IDLE_TIMEOUT_SECONDS = int(os.getenv("OPENSEMILAB_PHYSICAL_IDLE_TIMEOUT", "3600"))
 SAFE_PATH_COMPONENT = re.compile(r"^[A-Za-z0-9_.-]+$")
 MAX_ARTIFACT_BYTES = 20_000_000
 MAX_ARTIFACT_BUNDLE_BYTES = 40_000_000
@@ -257,6 +260,115 @@ def run_command(
         stderr = output_text(error.stderr)
         output = (stdout + ("\n" if stdout and stderr else "") + stderr)[-MAX_OUTPUT:]
         return {"exit_code": 124, "output": output + f"\nTimed out after {timeout_seconds}s", "duration_ms": round((time.monotonic() - started) * 1000), "timed_out": True}
+
+
+def run_streaming_command(
+    command: list[str],
+    cwd: Path,
+    timeout_seconds: int = 0,
+    idle_timeout_seconds: int = PHYSICAL_IDLE_TIMEOUT_SECONDS,
+    env_overrides: dict[str, str] | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+    """Run a long job while reporting liveness and bounded output.
+
+    A zero total timeout means that a healthy process is never stopped merely
+    because the design is large.  The separate idle watchdog still prevents a
+    permanently silent, stuck process from consuming resources forever.
+    """
+    started = time.monotonic()
+    last_output = started
+    chunks: deque[str] = deque()
+    output_size = 0
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        env={**os.environ, "HOME": str(cwd), **(env_overrides or {})},
+        start_new_session=True,
+    )
+    assert process.stdout is not None
+    pending: deque[bytes | None] = deque()
+    condition = threading.Condition()
+
+    def read_output() -> None:
+        while True:
+            block = os.read(process.stdout.fileno(), 4096)
+            with condition:
+                pending.append(block or None)
+                condition.notify()
+            if not block:
+                return
+
+    threading.Thread(target=read_output, daemon=True).start()
+    stream_closed = False
+    termination_reason = ""
+    last_progress = 0.0
+
+    def append_output(text: str) -> None:
+        nonlocal output_size
+        chunks.append(text)
+        output_size += len(text)
+        while output_size > MAX_OUTPUT and chunks:
+            removed = chunks.popleft()
+            output_size -= len(removed)
+
+    def snapshot() -> str:
+        return "".join(chunks)[-MAX_OUTPUT:]
+
+    try:
+        while process.poll() is None or not stream_closed:
+            with condition:
+                if not pending:
+                    condition.wait(timeout=1.0)
+                while pending:
+                    block = pending.popleft()
+                    if block is None:
+                        stream_closed = True
+                    else:
+                        append_output(block.decode("utf-8", errors="replace"))
+                        last_output = time.monotonic()
+
+            now = time.monotonic()
+            if timeout_seconds > 0 and now - started >= timeout_seconds:
+                termination_reason = f"Timed out after {timeout_seconds}s"
+            elif idle_timeout_seconds > 0 and now - last_output >= idle_timeout_seconds:
+                termination_reason = f"Stopped after {idle_timeout_seconds}s without new output"
+
+            if progress_callback and (now - last_progress >= 1.0 or stream_closed):
+                progress_callback({
+                    "elapsed_seconds": round(now - started),
+                    "last_output_seconds_ago": round(now - last_output),
+                    "live_output": snapshot(),
+                    "process_alive": process.poll() is None,
+                })
+                last_progress = now
+
+            if termination_reason and process.poll() is None:
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                    process.wait(timeout=10)
+                except (ProcessLookupError, subprocess.TimeoutExpired):
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                break
+        process.wait()
+    finally:
+        process.stdout.close()
+
+    output = snapshot()
+    if termination_reason:
+        output = (output + ("\n" if output else "") + termination_reason)[-MAX_OUTPUT:]
+    return {
+        "exit_code": 124 if termination_reason else process.returncode,
+        "output": output,
+        "duration_ms": round((time.monotonic() - started) * 1000),
+        "timed_out": bool(termination_reason),
+        "timeout_kind": "idle" if termination_reason.startswith("Stopped") else ("total" if termination_reason else None),
+    }
 
 
 def physical_artifacts(job_dir: Path) -> list[dict[str, Any]]:
@@ -604,7 +716,10 @@ def execute_adapter(action: str, payload: dict[str, Any], sources: dict[str, str
     return adapter_result(action, "GDS3D", job_id, result, artifacts)
 
 
-def execute(payload: dict[str, Any]) -> dict[str, Any]:
+def execute(
+    payload: dict[str, Any],
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
     action = payload.get("action")
     allowed_actions = {"lint", "simulate", "synthesize", "spice", "vhdl", "physical"} | ADAPTER_ACTIONS
     if action not in allowed_actions:
@@ -687,11 +802,13 @@ def execute(payload: dict[str, Any]) -> dict[str, Any]:
                 "--save-views-to", "final",
                 "physical-config.json",
             ]
-            result = run_command(
+            result = run_streaming_command(
                 command,
                 job_dir,
                 PHYSICAL_TIMEOUT_SECONDS,
+                PHYSICAL_IDLE_TIMEOUT_SECONDS,
                 env_overrides={"PDK": pdk, "STD_CELL_LIBRARY": scl},
+                progress_callback=progress_callback,
             )
             artifacts = physical_artifacts(job_dir)
             summary = physical_summary(job_dir, config)
@@ -844,7 +961,17 @@ class Handler(BaseHTTPRequestHandler):
                         if terminal:
                             oldest = min(terminal, key=lambda key: JOBS[key].get("created_at", 0))
                             JOBS.pop(oldest, None)
-                    JOBS[job_id] = {"job_id": job_id, "action": "physical", "status": "queued", "created_at": time.time()}
+                    JOBS[job_id] = {
+                        "job_id": job_id,
+                        "action": "physical",
+                        "status": "queued",
+                        "created_at": time.time(),
+                        "heartbeat_at": time.time(),
+                        "elapsed_seconds": 0,
+                        "last_output_seconds_ago": 0,
+                        "live_output": "",
+                        "process_alive": False,
+                    }
                 threading.Thread(target=run_background_job, args=(job_id, payload), daemon=True).start()
                 self.send_json(202, {"job_id": job_id, "action": "physical", "status": "queued"})
             else:
@@ -865,7 +992,14 @@ def run_background_job(job_id: str, payload: dict[str, Any]) -> None:
         JOBS[job_id]["status"] = "running"
         JOBS[job_id]["started_at"] = time.time()
     try:
-        result = execute(payload)
+        def report_progress(progress: dict[str, Any]) -> None:
+            with JOBS_LOCK:
+                job = JOBS.get(job_id)
+                if job is not None:
+                    job.update(progress)
+                    job["heartbeat_at"] = time.time()
+
+        result = execute(payload, progress_callback=report_progress)
         with JOBS_LOCK:
             JOBS[job_id].update(status="completed" if result["success"] else "failed", result=result, finished_at=time.time())
     except Exception as error:
