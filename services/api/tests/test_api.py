@@ -1,6 +1,7 @@
 import io
 import json
 import tarfile
+from unittest.mock import patch
 
 import httpx
 from fastapi.testclient import TestClient
@@ -105,6 +106,15 @@ def test_physical_job_requires_bounded_options():
         "physical": {"pdk": "ihp-sg13g2", "clock_port": "clk"}
     })
     assert unsupported.status_code == 422
+
+
+def test_physical_job_cancel_is_forwarded_to_worker():
+    forwarded = httpx.Response(202, json={"job_id": "abc123", "status": "cancelling"})
+    with patch("opensemilab_api.main.httpx.post", return_value=forwarded) as post:
+        response = client.post("/api/v1/eda/jobs/abc123/cancel")
+    assert response.status_code == 202
+    assert response.json()["status"] == "cancelling"
+    post.assert_called_once_with("http://localhost:9000/jobs/abc123/cancel", timeout=15)
 
 
 def test_specialized_eda_actions_share_the_validated_contract():
