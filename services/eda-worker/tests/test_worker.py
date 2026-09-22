@@ -155,6 +155,9 @@ Index   v-sweep   v(a)       v(y)
         self.assertIn("set_clock_uncertainty 0.125", sdc)
         with self.assertRaisesRegex(ValueError, "clock port 'missing'"):
             worker.validate_physical_top(sources, "top", "missing")
+        worker.validate_sdc_content("create_clock -period 25 [get_ports clk]\n")
+        with self.assertRaisesRegex(ValueError, "not allowed"):
+            worker.validate_sdc_content("[exec id]\n")
 
     def test_compact_def_layout_keeps_a_bounded_visualization(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -239,6 +242,26 @@ Index   v-sweep   v(a)       v(y)
         self.assertAlmostEqual(summary["estimated_critical_path_ns"], 23.62677)
         self.assertEqual(summary["signoff_status"], "fail")
         self.assertIn("maximum slew: 1072", summary["signoff_blockers"])
+
+    def test_relative_floorplan_reads_final_die_dimensions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            job = Path(temporary)
+            final = job / "final"
+            final.mkdir()
+            (final / "design.def").write_text(
+                "UNITS DISTANCE MICRONS 1000 ;\nDIEAREA ( 0 0 ) ( 650000 600000 ) ;\n"
+                "COMPONENTS 1 ;\nEND COMPONENTS\n",
+                encoding="utf-8",
+            )
+            summary = worker.physical_summary(job, {
+                "PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd",
+                "FP_SIZING": "relative", "FP_CORE_UTIL": 35, "CLOCK_PERIOD": 25,
+            })
+
+        self.assertEqual(summary["floorplan_mode"], "auto")
+        self.assertEqual(summary["die_width_um"], 650)
+        self.assertEqual(summary["die_height_um"], 600)
+        self.assertEqual(summary["die_area_um2"], 390000)
 
     def test_physical_summary_ignores_lone_exponent_marker_and_reads_scientific_notation(self):
         with tempfile.TemporaryDirectory() as temporary:

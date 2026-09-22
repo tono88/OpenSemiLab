@@ -26,14 +26,14 @@ Open-source EDA and multiphysics tools are powerful, but they expose different i
 
 - Enter a dedicated **Design Studio** for complete IC and system projects.
 - Create a tool-aware design plan for microcontrollers/SoCs, smart sensor interfaces, analog blocks, RF front-ends, standard cells/IP, and FPGA prototypes.
-- Select SKY130, GF180MCU, IHP SG13G2, or IHP SG13CMOS5L and generate a reproducible staged manifest.
+- Select SKY130, GF180MCU, IHP SG13G2, or IHP SG13CMOS5L with an explicit integration/maturity notice and generate a reproducible staged manifest. SKY130/GF180 have the integrated digital path; IHP paths remain partial or scaffold-only.
 - Map each stage to relevant IIC-OSIC-TOOLS engines while clearly distinguishing connected and pending adapters.
 - Edit SystemVerilog in the browser and run Verible/Verilator lint, Icarus Verilog simulation, and Yosys synthesis in IIC-OSIC-TOOLS.
 - Inspect automatically captured VCD waveforms with signal selection, zoom, and time-window navigation.
 - Simulate VHDL-2008 projects with GHDL and capture their VCD output through the same portable result contract.
 - Download the synthesized Yosys JSON netlist and inspect complete console output.
 - Plot normalized ngspice `.print` results for DC, transient, AC, and noise analyses when those vectors are present in the testbench.
-- Run LibreLane Classic asynchronously for SKY130/GF180, explore real DEF placement, density, 2D routing and an interactive exploded 3D layer view, review timing/area/DRC evidence in the sign-off center, and export bounded final GDSII, DEF, LEF, netlist, timing, metrics, log, and JSON report artifacts.
+- Run LibreLane Classic asynchronously for SKY130/GF180 with automatic post-synthesis die sizing or expert manual dimensions, explore real DEF placement, density, 2D routing and an interactive exploded 3D layer view, review timing/area/DRC/LVS/electrical evidence in the sign-off center, and export a categorized sign-off ZIP plus individual artifacts.
 - Keep a bounded local execution history and compare implementation and simulation results.
 - Navigate active projects through a compact five-stage vertical wizard, with an explicit IIC-OSIC integration matrix.
 - Replay numeric simulation traces as animations, zoom them, and pan horizontally by dragging or using the window control.

@@ -902,7 +902,23 @@ def physical_summary(job_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
     def metric_value(*names: str) -> float | None:
         return next((metric_values[name] for name in names if name in metric_values), None)
 
-    die_area = float(config["DIE_AREA"][2]) * float(config["DIE_AREA"][3])
+    die_width = die_height = 0.0
+    if isinstance(config.get("DIE_AREA"), list) and len(config["DIE_AREA"]) >= 4:
+        die_width = float(config["DIE_AREA"][2]) - float(config["DIE_AREA"][0])
+        die_height = float(config["DIE_AREA"][3]) - float(config["DIE_AREA"][1])
+    else:
+        def_candidates = sorted(job_dir.rglob("*.def"), key=lambda path: (0 if "final" in path.parts else 1, len(path.parts), str(path)))
+        for def_path in def_candidates:
+            with def_path.open("r", encoding="utf-8", errors="replace") as stream:
+                head = stream.read(200_000)
+            units_match = re.search(r"UNITS\s+DISTANCE\s+MICRONS\s+(\d+)", head, re.IGNORECASE)
+            die_match = re.search(r"DIEAREA\s*\(\s*(-?\d+)\s+(-?\d+)\s*\)\s*\(\s*(-?\d+)\s+(-?\d+)\s*\)", head, re.IGNORECASE)
+            if die_match:
+                units = max(1, int(units_match.group(1))) if units_match else 1000
+                die_width = (int(die_match.group(3)) - int(die_match.group(1))) / units
+                die_height = (int(die_match.group(4)) - int(die_match.group(2))) / units
+                break
+    die_area = die_width * die_height
     summary: dict[str, Any] = {
         "schema": "opensemilab.physical-summary/v1",
         "pdk": config["PDK"],
@@ -910,6 +926,9 @@ def physical_summary(job_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
         "die_area_um2": die_area,
         "target_utilization_pct": float(config["FP_CORE_UTIL"]),
         "clock_period_ns": float(config.get("CLOCK_PERIOD", 10.0)),
+        "floorplan_mode": "auto" if config.get("FP_SIZING") == "relative" else "manual",
+        "die_width_um": die_width or None,
+        "die_height_um": die_height or None,
         "cell_count": None,
         "wns_ns": None,
         "tns_ns": None,
@@ -937,7 +956,8 @@ def physical_summary(job_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
         "signoff_status": "review",
         "production_ready": False,
         "handoff_level": "hardened_block",
-        "constraint_scope": "clock_only",
+        "constraint_scope": "project_sdc" if (job_dir / ".opensemilab-project-sdc").exists() else "clock_only",
+        "pdk_distribution_status": "experimental_open_pdk",
     }
     text_files = [path for root in (job_dir / "final", job_dir / "runs") if root.exists() for path in root.rglob("*") if path.is_file() and path.suffix.lower() in {".def", ".rpt", ".log", ".csv", ".json"}]
     patterns = {
@@ -990,7 +1010,7 @@ def physical_summary(job_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
         core_ratio = (summary["core_area_um2"] or die_area) / die_area if die_area else 1.0
         core_ratio = min(1.0, max(0.5, core_ratio))
         desired_die_area = summary["stdcell_area_um2"] / (summary["target_utilization_pct"] / 100) / core_ratio * 1.20
-        aspect = float(config["DIE_AREA"][2]) / max(1.0, float(config["DIE_AREA"][3]))
+        aspect = die_width / max(1.0, die_height) if die_width and die_height else 1.0
         recommended_width = math.sqrt(desired_die_area * aspect)
         recommended_height = math.sqrt(desired_die_area / aspect)
         summary["recommended_die_width_um"] = math.ceil(recommended_width / 50) * 50
@@ -1025,7 +1045,9 @@ def physical_summary(job_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
         warnings.append(f"disconnected pins: {int(summary['disconnected_pins'])}")
     if summary["missing_handoff_artifacts"]:
         warnings.append("missing handoff artifacts: " + ", ".join(summary["missing_handoff_artifacts"]))
-    warnings.append("generated SDC constrains the clock only; project-specific I/O delays and loads require review")
+    if summary["constraint_scope"] == "clock_only":
+        warnings.append("generated SDC constrains the clock only; project-specific I/O delays and loads require review")
+    warnings.append("the open PDK distribution is not a foundry production certification")
     summary["signoff_blockers"] = blockers
     summary["signoff_warnings"] = warnings
     summary["signoff_status"] = "fail" if blockers else "review" if warnings else "pass"
@@ -1059,6 +1081,14 @@ def physical_sdc(clock_port: str, clock_period: float) -> str:
         f"create_clock -name {{{clock_port}}} -period {clock_period:g} [get_ports $clk_input]\n"
         f"set_clock_uncertainty {uncertainty:g} [get_clocks {{{clock_port}}}]\n"
     )
+
+
+def validate_sdc_content(content: str) -> None:
+    if len(content.encode()) > 100_000:
+        raise ValueError("project SDC exceeds 100 KB")
+    forbidden = ("[exec", "source ", "open ", "socket ", "package require", "file delete", "file rename")
+    if any(token in content.lower() for token in forbidden):
+        raise ValueError("project SDC contains commands that are not allowed in the isolated flow")
 
 
 def adapter_result(action: str, engine: str, job_id: str, result: dict[str, Any], artifacts: list[dict[str, Any]], **extra: Any) -> dict[str, Any]:
@@ -1291,13 +1321,25 @@ def execute(
             die_width = float(options.get("die_width_um", 120.0))
             die_height = float(options.get("die_height_um", 120.0))
             utilization = float(options.get("core_utilization_pct", 40.0))
+            floorplan_mode = options.get("floorplan_mode", "auto")
             timing_effort = options.get("timing_effort", "balanced")
+            if floorplan_mode not in {"auto", "manual"}:
+                raise ValueError("floorplan_mode must be auto or manual")
             if timing_effort not in {"balanced", "aggressive"}:
                 raise ValueError("timing_effort must be balanced or aggressive")
-            if not 0.1 <= clock_period <= 1000 or not 30 <= die_width <= 5000 or not 30 <= die_height <= 5000 or not 5 <= utilization <= 80:
+            dimensions_valid = floorplan_mode == "auto" or (30 <= die_width <= 5000 and 30 <= die_height <= 5000)
+            if not 0.1 <= clock_period <= 1000 or not dimensions_valid or not 5 <= utilization <= 80:
                 raise ValueError("physical options are outside safe limits")
             validate_physical_top(sources, top, clock_port)
-            sdc_content = physical_sdc(clock_port, clock_period)
+            supplied_sdc = options.get("sdc_content")
+            if supplied_sdc is not None and not isinstance(supplied_sdc, str):
+                raise ValueError("sdc_content must be text")
+            if supplied_sdc and supplied_sdc.strip():
+                validate_sdc_content(supplied_sdc)
+                sdc_content = supplied_sdc.rstrip() + "\n"
+                (job_dir / ".opensemilab-project-sdc").touch()
+            else:
+                sdc_content = physical_sdc(clock_port, clock_period)
             (job_dir / "constraints.sdc").write_text(sdc_content, encoding="utf-8")
             config = {
                 "meta": {"version": 2, "flow": "Classic"},
@@ -1309,12 +1351,13 @@ def execute(
                 "CLOCK_PERIOD": clock_period,
                 "PNR_SDC_FILE": "dir::constraints.sdc",
                 "SIGNOFF_SDC_FILE": "dir::constraints.sdc",
-                "FP_SIZING": "absolute",
-                "DIE_AREA": [0, 0, die_width, die_height],
+                "FP_SIZING": "relative" if floorplan_mode == "auto" else "absolute",
                 "FP_CORE_UTIL": utilization,
                 "RUN_POST_GPL_DESIGN_REPAIR": True,
                 "RUN_POST_CTS_RESIZER_TIMING": True,
             }
+            if floorplan_mode == "manual":
+                config["DIE_AREA"] = [0, 0, die_width, die_height]
             if timing_effort == "aggressive":
                 config.update({
                     "RUN_POST_GRT_DESIGN_REPAIR": True,

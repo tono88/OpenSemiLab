@@ -17,13 +17,15 @@
 .physical-config button.running{position:relative;border-color:#e8bd69;color:#fff0c7}.run-spinner{display:inline-block;width:8px;height:8px;margin-right:7px;border:1px solid #e8bd6950;border-top-color:#e8bd69;border-radius:50%;animation:run-spin .8s linear infinite}.status-pulse{display:inline-block;width:7px;height:7px;margin-right:8px;border-radius:50%;background:#e8bd69;box-shadow:0 0 0 0 #e8bd6970;animation:status-pulse 1.4s infinite}.physical-steps i.active{animation:stage-working 1.2s ease-in-out infinite}@keyframes run-spin{to{transform:rotate(360deg)}}@keyframes status-pulse{70%{box-shadow:0 0 0 7px #e8bd6900}}@keyframes stage-working{50%{color:#fff0c7;background:#e8bd6915}}
 
 /* Timing presets and explicit optimization level for long physical runs. */
-.physical-config{grid-template-columns:repeat(6,minmax(110px,1fr)) minmax(190px,1.35fr)}
+.physical-config{grid-template-columns:repeat(7,minmax(105px,1fr)) minmax(190px,1.35fr)}
 .physical-config select{display:block;width:100%;margin-top:6px;padding:9px;background:#020b08;border:1px solid #ffffff20;color:#b9ecd9;font:10px DM Mono}
+.physical-config input:disabled{opacity:.42;cursor:not-allowed}
 .physical-config>button{border:1px solid #45e6a680;background:#123126;color:#dff8ee;font:10px DM Mono;cursor:pointer}
 .period-presets{display:flex;gap:3px;margin-top:4px}
 .physical-config .period-presets button{flex:1;border:1px solid #ffffff18;background:#07130f;color:#66877a;padding:3px;font:7px DM Mono}
 .physical-config .period-presets button.active{border-color:#45e6a670;color:#45e6a6}
 .physical-guidance{margin:-5px 18px 14px;color:#66877a;font:8px/1.5 DM Mono}
+.physical-recommendation{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:-5px 18px 14px;padding:9px 11px;border:1px solid #e8bd6940;background:#e8bd6908;color:#d6c38e;font:8px DM Mono}.physical-recommendation button{border:1px solid #e8bd6960;background:#241d0e;color:#e8bd69;padding:6px 8px;font:8px DM Mono;cursor:pointer}
 @media(max-width:1200px){.physical-config{grid-template-columns:repeat(4,1fr)}}
 @media(max-width:1000px){.physical-config{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:560px){.physical-config{grid-template-columns:1fr}}

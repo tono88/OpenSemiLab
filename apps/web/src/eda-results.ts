@@ -28,6 +28,9 @@ export interface PhysicalSummary {
   die_area_um2:number
   target_utilization_pct:number
   clock_period_ns?:number
+  floorplan_mode?:'auto'|'manual'
+  die_width_um?:number|null
+  die_height_um?:number|null
   cell_count:number|null
   wns_ns:number|null
   tns_ns:number|null
@@ -56,6 +59,7 @@ export interface PhysicalSummary {
   production_ready?:boolean
   handoff_level?:string
   constraint_scope?:string
+  pdk_distribution_status?:string
 }
 
 export interface RunResult {

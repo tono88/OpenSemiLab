@@ -61,6 +61,7 @@ def stage(id: str, title: str, purpose: str, tools: list[str], output: str, stat
 
 
 def make_plan(project: DesignRequest) -> DesignPlan:
+    digital_physical_supported = project.pdk in {"sky130A", "gf180mcuD"}
     rtl_runner_available = project.kind in {"microcontroller", "fpga_prototype", "sensor_interface", "standard_cell"}
     spice_runner_available = project.kind in {"sensor_interface", "analog_block", "standard_cell"}
     flows: dict[str, list[DesignStage]] = {
@@ -108,12 +109,18 @@ def make_plan(project: DesignRequest) -> DesignPlan:
             stage("implementation", "Implementation", "Configure the digital, analog or physical implementation route.", ["IIC-OSIC-TOOLS"], "implementation artifacts", "optional"),
         ],
     }
-    return DesignPlan(
-        project=project,
-        stages=flows[project.kind],
-        runner="IIC-OSIC-TOOLS isolated worker",
-        runner_available=rtl_runner_available or spice_runner_available,
-        notice=(
+    selected_stages = [stage.model_copy(deep=True) for stage in flows[project.kind]]
+    if not digital_physical_supported:
+        for item in selected_stages:
+            if item.id in {"physical", "signoff", "digital"}:
+                item.status = "adapter_pending"
+    if not digital_physical_supported and project.kind in {"microcontroller", "sensor_interface", "standard_cell"}:
+        notice = (
+            "RTL and simulation tools remain executable, but automated RTL-to-GDSII is not connected for the selected IHP PDK. "
+            "Use SKY130/GF180 for the integrated digital flow, or treat this project as a migration scaffold."
+        )
+    else:
+        notice = (
             "RTL, formal, FPGA, SPICE simulation with ngspice/Xyce, and specialized open EDA adapters are executable in the isolated IIC-OSIC worker. "
             "LibreLane physical implementation is available for SKY130/GF180. Mixed-signal co-simulation remains in development."
             if rtl_runner_available and spice_runner_available
@@ -122,5 +129,11 @@ def make_plan(project: DesignRequest) -> DesignPlan:
             else "SPICE/Xyce, Xschem, CACE and openEMS adapters are executable in the isolated IIC-OSIC worker."
             if spice_runner_available
             else "This engineering flow is planned; its isolated execution adapter remains in development."
-        ),
+        )
+    return DesignPlan(
+        project=project,
+        stages=selected_stages,
+        runner="IIC-OSIC-TOOLS isolated worker",
+        runner_available=rtl_runner_available or spice_runner_available,
+        notice=notice,
     )
