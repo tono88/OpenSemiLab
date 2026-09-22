@@ -159,6 +159,52 @@ Index   v-sweep   v(a)       v(y)
         self.assertIsNone(summary["wns_ns"])
         self.assertEqual(summary["tns_ns"], -1.25e-3)
 
+    def test_physical_summary_does_not_treat_a_timestamp_year_as_drc_count(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            job = Path(temporary)
+            runs = job / "runs"
+            runs.mkdir()
+            (runs / "flow.log").write_text(
+                "DRC violations checker completed for RUN_2026-09-22\n"
+                "* DRC\nPassed ✅\n",
+                encoding="utf-8",
+            )
+            summary = worker.physical_summary(job, {
+                "PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd",
+                "DIE_AREA": [0, 0, 1200, 1200], "FP_CORE_UTIL": 35,
+            })
+
+        self.assertEqual(summary["drc_violations"], 0)
+
+    def test_physical_preflight_rejects_insufficient_job_disk(self):
+        payload = {
+            "action": "physical", "top": "top",
+            "sources": {"rtl/top.sv": "module top(input clk); endmodule\n"},
+            "physical": {"pdk": "sky130A"},
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            original_root = worker.WORK_ROOT
+            worker.WORK_ROOT = Path(temporary)
+            try:
+                with patch.object(worker.shutil, "which", return_value="/usr/bin/librelane"), patch.object(worker, "disk_free_mb", return_value=100):
+                    with self.assertRaisesRegex(RuntimeError, "PHYSICAL PREFLIGHT ERROR"):
+                        worker.execute(payload)
+            finally:
+                worker.WORK_ROOT = original_root
+
+    def test_streaming_command_stops_before_disk_is_exhausted(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.object(worker, "disk_free_mb", return_value=100):
+                result = worker.run_streaming_command(
+                    ["python3", "-u", "-c", "import time; print('routing'); time.sleep(30)"],
+                    Path(temporary), idle_timeout_seconds=60,
+                )
+
+        self.assertEqual(result["exit_code"], 75)
+        self.assertTrue(result["resource_exhausted"])
+        self.assertFalse(result["timed_out"])
+        self.assertIn("Stopped before disk exhaustion", result["output"])
+
     def test_physical_stage_detector_reports_furthest_known_stage(self):
         stage = worker.detect_physical_stage("Yosys synthesis complete\nOpenROAD global placement\nClock tree synthesis")
         self.assertEqual(stage["stage"], "cts")
