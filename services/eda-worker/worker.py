@@ -365,6 +365,20 @@ def disk_free_mb(path: Path) -> int:
     return shutil.disk_usage(path).free // (1024 * 1024)
 
 
+def wait_for_process(process: subprocess.Popen[bytes], timeout: float | None = None) -> bool:
+    """Wait for a child without losing the job when another reaper wins the race.
+
+    Container runtimes and signal handlers can reap a process between ``poll``
+    and ``wait``.  That condition must not discard LibreLane's logs and final
+    artifacts; callers can still use the return code already captured by poll.
+    """
+    try:
+        process.wait(timeout=timeout)
+        return True
+    except (ProcessLookupError, ChildProcessError):
+        return False
+
+
 def run_streaming_command(
     command: list[str],
     cwd: Path,
@@ -486,17 +500,23 @@ def run_streaming_command(
             if termination_reason and process.poll() is None:
                 try:
                     os.killpg(process.pid, signal.SIGTERM)
-                    process.wait(timeout=10)
-                except (ProcessLookupError, subprocess.TimeoutExpired):
+                    if not wait_for_process(process, timeout=10):
+                        process.returncode = process.returncode if process.returncode is not None else 70
+                except ProcessLookupError:
+                    process.returncode = process.returncode if process.returncode is not None else 70
+                except subprocess.TimeoutExpired:
                     try:
                         os.killpg(process.pid, signal.SIGKILL)
                     except ProcessLookupError:
                         pass
-        process.wait()
+        process_reaped = wait_for_process(process)
     finally:
         process.stdout.close()
 
     output = snapshot()
+    if not process_reaped and process.returncode is None:
+        process.returncode = 70
+        output = (output + ("\n" if output else "") + "[OpenSemiLab] Process ended before its final status could be collected; preserved logs and artifacts require review.")[-MAX_OUTPUT:]
     if termination_reason:
         output = (output + ("\n" if output else "") + termination_reason)[-MAX_OUTPUT:]
     return {
