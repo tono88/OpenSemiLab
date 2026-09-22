@@ -1,5 +1,7 @@
 import importlib.util
 import tempfile
+import threading
+import time
 import unittest
 from base64 import b64encode
 from pathlib import Path
@@ -31,6 +33,20 @@ class WorkerResultTests(unittest.TestCase):
         self.assertIn("stage two", result["output"])
         self.assertTrue(any(update["process_alive"] for update in updates))
         self.assertTrue(any("stage one" in update["live_output"] for update in updates))
+
+    def test_streaming_command_cancels_process_group_without_reporting_timeout(self):
+        cancel = threading.Event()
+        threading.Thread(target=lambda: (time.sleep(0.2), cancel.set()), daemon=True).start()
+        with tempfile.TemporaryDirectory() as temporary:
+            result = worker.run_streaming_command(
+                ["python3", "-u", "-c", "import time; print('started'); time.sleep(30)"],
+                Path(temporary), idle_timeout_seconds=60, cancel_event=cancel,
+            )
+
+        self.assertEqual(result["exit_code"], 130)
+        self.assertTrue(result["cancelled"])
+        self.assertFalse(result["timed_out"])
+        self.assertIn("Cancelled by the user", result["output"])
 
     def test_run_command_decodes_partial_byte_output_on_timeout(self):
         timeout = worker.subprocess.TimeoutExpired(
@@ -125,6 +141,42 @@ Index   v-sweep   v(a)       v(y)
         self.assertEqual(summary["tns_ns"], -1.75)
         self.assertEqual(summary["drc_violations"], 3)
         self.assertEqual(summary["die_area_um2"], 12000)
+
+    def test_physical_summary_ignores_lone_exponent_marker_and_reads_scientific_notation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            job = Path(temporary)
+            final = job / "final"
+            final.mkdir()
+            (final / "timing.rpt").write_text(
+                "WNS Estimated after placement\nTNS = -1.25E-03\n",
+                encoding="utf-8",
+            )
+            summary = worker.physical_summary(job, {
+                "PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd",
+                "DIE_AREA": [0, 0, 100, 100], "FP_CORE_UTIL": 35,
+            })
+
+        self.assertIsNone(summary["wns_ns"])
+        self.assertEqual(summary["tns_ns"], -1.25e-3)
+
+    def test_physical_stage_detector_reports_furthest_known_stage(self):
+        stage = worker.detect_physical_stage("Yosys synthesis complete\nOpenROAD global placement\nClock tree synthesis")
+        self.assertEqual(stage["stage"], "cts")
+        self.assertEqual(stage["tool"], "OpenROAD")
+
+    def test_background_failure_keeps_live_log_and_diagnostic_artifacts(self):
+        job_id = "diagnostic01"
+        worker.JOBS[job_id] = {
+            "job_id": job_id, "status": "queued", "live_output": "LibreLane reached routing", "elapsed_seconds": 12,
+        }
+        worker.JOB_CANCEL_EVENTS[job_id] = worker.threading.Event()
+        with patch.object(worker, "execute", side_effect=ValueError("could not convert string to float: 'E'")):
+            worker.run_background_job(job_id, {"action": "physical"})
+
+        job = worker.JOBS.pop(job_id)
+        self.assertEqual(job["status"], "failed")
+        self.assertIn("LibreLane reached routing", job["result"]["output"])
+        self.assertTrue(any(item["name"] == "execution-diagnostics.txt" for item in job["result"]["artifacts"]))
 
     def test_vhdl_simulation_runs_three_ghdl_phases_and_collects_vcd(self):
         payload = {"action": "vhdl", "top": "tb_top", "sources": {"rtl/top.vhd": "entity top is end; architecture rtl of top is begin end;"}}
