@@ -16,6 +16,25 @@ export interface StoredProject {
   files: ProjectFile[]
 }
 
+export function normalizeProjectExecution(project:StoredProject):StoredProject {
+  const manifestIndex=project.files.findIndex(file=>file.path==='project.json')
+  if(manifestIndex<0)return project
+  try {
+    const parsed=JSON.parse(project.files[manifestIndex].content)
+    const execution=parsed.execution??{}
+    const rtlTop=String(execution.rtl_top??'').trim()
+    if(!rtlTop)return project
+    const preferred=`${rtlTop}_fpga_top`
+    const hasPreferredWrapper=project.files.some(file=>file.role==='source'&&Array.from(file.content.matchAll(/\bmodule\s+([A-Za-z_][A-Za-z0-9_$]*)/g)).some(match=>match[1]===preferred))
+    if(!hasPreferredWrapper||execution.fpga_top===preferred)return project
+    const files=project.files.map((file,index)=>index===manifestIndex?{
+      ...file,
+      content:JSON.stringify({...parsed,execution:{...execution,fpga_top:preferred}},null,2)+'\n',
+    }:file)
+    return {...project,files}
+  } catch {return project}
+}
+
 const STORAGE_KEY = 'opensemilab.projects.v1'
 
 const readme = (name:string, kind:string, pdk:string) => `# ${name}
@@ -470,9 +489,11 @@ export function loadProjects():StoredProject[] {
           }
         } catch { /* Preserve a user-edited non-JSON manifest. */ }
       }
-      if(!missing.length&&files===project.files) return project
+      if(!missing.length&&files===project.files) return normalizeProjectExecution(project)
       if(missing.length) changed=true
-      return {...project,files}
+      const upgradedProject=normalizeProjectExecution({...project,files})
+      if(upgradedProject.files!==files)changed=true
+      return upgradedProject
     })
     if(changed) saveProjects(upgraded)
     return upgraded
