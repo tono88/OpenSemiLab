@@ -300,7 +300,7 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
         if(typeof job.live_output==='string')setPhysicalLiveOutput(job.live_output)
         if(typeof job.stage==='string')setPhysicalStage(job.stage)
         const activity=typeof job.last_activity_seconds_ago==='number'?`${es?'actividad hace':'activity'} ${job.last_activity_seconds_ago}s`:typeof job.last_output_seconds_ago==='number'?`${es?'última salida hace':'last output'} ${job.last_output_seconds_ago}s`:''
-        const resources=typeof job.cpu_percent==='number'?`CPU ${job.cpu_percent}% · RAM ${job.memory_mb??0} MB`:''
+        const resources=typeof job.cpu_percent==='number'?`CPU ${job.cpu_percent}% · RAM ${job.memory_mb??0} MB${typeof job.disk_free_mb==='number'?` · ${es?'disco libre':'disk free'} ${job.disk_free_mb} MB`:''}`:''
         const stage=job.stage_label?`${job.stage_label} · ${job.tool??'LibreLane'}`:''
         const alive=job.process_alive?(es?'proceso activo':'process alive'):job.status
         setPhysicalStatus(`${es?'Trabajo':'Job'} ${jobId} · ${alive}${stage?` · ${stage}`:''}${activity?` · ${activity}`:''}${resources?` · ${resources}`:''}`)

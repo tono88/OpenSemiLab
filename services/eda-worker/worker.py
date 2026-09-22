@@ -31,6 +31,8 @@ MAX_OUTPUT = 200_000
 TIMEOUT_SECONDS = int(os.getenv("OPENSEMILAB_JOB_TIMEOUT", "90"))
 PHYSICAL_TIMEOUT_SECONDS = int(os.getenv("OPENSEMILAB_PHYSICAL_TIMEOUT", "0"))
 PHYSICAL_IDLE_TIMEOUT_SECONDS = int(os.getenv("OPENSEMILAB_PHYSICAL_IDLE_TIMEOUT", "3600"))
+PHYSICAL_MIN_START_FREE_MB = int(os.getenv("OPENSEMILAB_PHYSICAL_MIN_START_FREE_MB", "3072"))
+PHYSICAL_MIN_RUNTIME_FREE_MB = int(os.getenv("OPENSEMILAB_PHYSICAL_MIN_RUNTIME_FREE_MB", "512"))
 SAFE_PATH_COMPONENT = re.compile(r"^[A-Za-z0-9_.-]+$")
 MAX_ARTIFACT_BYTES = 20_000_000
 MAX_ARTIFACT_BUNDLE_BYTES = 40_000_000
@@ -342,6 +344,10 @@ def process_resource_sample(root_pid: int) -> tuple[int, int, list[int]]:
     return ticks, rss_kib, pids
 
 
+def disk_free_mb(path: Path) -> int:
+    return shutil.disk_usage(path).free // (1024 * 1024)
+
+
 def run_streaming_command(
     command: list[str],
     cwd: Path,
@@ -419,6 +425,7 @@ def run_streaming_command(
 
             now = time.monotonic()
             ticks, rss_kib, pids = process_resource_sample(process.pid)
+            free_disk_mb = disk_free_mb(cwd)
             sample_seconds = max(now - previous_sample_at, 0.001)
             cpu_percent = max(0.0, ((ticks - previous_ticks) / clock_ticks) / sample_seconds * 100) if previous_ticks else 0.0
             previous_ticks, previous_sample_at = ticks, now
@@ -430,6 +437,12 @@ def run_streaming_command(
             elif cancel_event is not None and cancel_event.is_set():
                 termination_reason = "Cancelled by the user"
                 termination_kind = "cancelled"
+            elif PHYSICAL_MIN_RUNTIME_FREE_MB > 0 and free_disk_mb < PHYSICAL_MIN_RUNTIME_FREE_MB:
+                termination_reason = (
+                    f"Stopped before disk exhaustion: only {free_disk_mb} MB remain; "
+                    f"the safety reserve is {PHYSICAL_MIN_RUNTIME_FREE_MB} MB"
+                )
+                termination_kind = "disk"
             elif idle_timeout_seconds > 0 and now - last_activity >= idle_timeout_seconds:
                 termination_reason = f"Stopped after {idle_timeout_seconds}s without output or CPU activity"
                 termination_kind = "idle"
@@ -446,6 +459,8 @@ def run_streaming_command(
                     "child_pids": pids[1:],
                     "cpu_percent": round(cpu_percent, 1),
                     "memory_mb": round(rss_kib / 1024, 1),
+                    "disk_free_mb": free_disk_mb,
+                    "disk_state": "low" if free_disk_mb < max(PHYSICAL_MIN_RUNTIME_FREE_MB * 2, 1024) else "ok",
                     "activity_state": "working" if cpu_percent >= 1.0 else ("waiting-output" if now - last_output < 30 else "quiet"),
                     **stage,
                 })
@@ -468,12 +483,14 @@ def run_streaming_command(
     if termination_reason:
         output = (output + ("\n" if output else "") + termination_reason)[-MAX_OUTPUT:]
     return {
-        "exit_code": 130 if termination_kind == "cancelled" else (124 if termination_reason else process.returncode),
+        "exit_code": 130 if termination_kind == "cancelled" else (75 if termination_kind == "disk" else (124 if termination_reason else process.returncode)),
         "output": output,
         "duration_ms": round((time.monotonic() - started) * 1000),
         "timed_out": termination_kind in {"idle", "total"},
         "timeout_kind": termination_kind if termination_kind in {"idle", "total"} else None,
         "cancelled": termination_kind == "cancelled",
+        "resource_exhausted": termination_kind == "disk",
+        "disk_free_mb": disk_free_mb(cwd),
         **detect_physical_stage(output),
     }
 
@@ -643,12 +660,19 @@ def physical_summary(job_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
     patterns = {
         "wns_ns": [rf"timing__setup__wns[\t ,:=]+({STRICT_NUMBER})", rf"\bWNS\b[^\n0-9.+-]*({STRICT_NUMBER})"],
         "tns_ns": [rf"timing__setup__tns[\t ,:=]+({STRICT_NUMBER})", rf"\bTNS\b[^\n0-9.+-]*({STRICT_NUMBER})"],
-        "drc_violations": [r"route__drc_errors[\s,:=]+([0-9]+)", r"drc[^\n]{0,30}(?:violations|errors)[^0-9]*([0-9]+)"],
+        "drc_violations": [
+            r"route__drc_errors[\t ,:=]+([0-9]+)",
+            r"(?im)^\s*(?:total\s+)?drc\s+(?:violations|errors)\s*[:=]\s*([0-9]+)\s*$",
+            r"(?im)^\s*([0-9]+)\s+(?:drc\s+)?(?:violations|errors)\s*$",
+        ],
     }
+    drc_passed = False
     for path in text_files:
         if path.stat().st_size > 5_000_000:
             continue
         content = path.read_text(encoding="utf-8", errors="replace")
+        if re.search(r"(?im)^\s*\*\s*DRC\s*$\s*^\s*Passed\b", content):
+            drc_passed = True
         if summary["cell_count"] is None and path.suffix.lower() == ".def":
             match = re.search(r"(?im)^COMPONENTS\s+(\d+)\s*;", content)
             if match:
@@ -663,6 +687,8 @@ def physical_summary(job_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
                     if value is not None:
                         summary[key] = int(value) if key == "drc_violations" else value
                         break
+    if summary["drc_violations"] is None and drc_passed:
+        summary["drc_violations"] = 0
     return summary
 
 
@@ -863,6 +889,13 @@ def execute(
             binary = TOOL_BINARIES["librelane"]
             if not shutil.which(binary):
                 raise RuntimeError("LibreLane is unavailable after IIC-OSIC environment initialization")
+            available_disk_mb = disk_free_mb(job_dir)
+            if PHYSICAL_MIN_START_FREE_MB > 0 and available_disk_mb < PHYSICAL_MIN_START_FREE_MB:
+                raise RuntimeError(
+                    f"PHYSICAL PREFLIGHT ERROR: only {available_disk_mb} MB are free in {WORK_ROOT}; "
+                    f"at least {PHYSICAL_MIN_START_FREE_MB} MB are required before RTL-to-GDSII. "
+                    "Free Docker disk space or enlarge the worker job volume, then retry."
+                )
             pdk_root = os.getenv("PDK_ROOT") or os.getenv("PDKPATH")
             if not pdk_root:
                 raise RuntimeError("PDK_ROOT is not configured in the IIC-OSIC environment")
