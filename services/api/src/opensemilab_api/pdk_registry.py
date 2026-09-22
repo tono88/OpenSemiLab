@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import tarfile
+import tempfile
 import uuid
 import zipfile
 from datetime import UTC, datetime
@@ -106,8 +107,19 @@ def _category(path: Path) -> str | None:
         return "liberty"
     if suffix == ".db":
         return "compiled_db"
-    if suffix == ".lef":
-        return "tech_lef" if "tech" in name else "cell_lef"
+    if suffix in {".lef", ".tlef"}:
+        lowered = str(path).lower().replace("\\", "/")
+        if "lef_techfiles" in lowered or "/techlef/" in lowered or "tech" in name or suffix == ".tlef":
+            return "tech_lef"
+        try:
+            sample = path.read_bytes()[:2 * 1024 * 1024].decode("utf-8", errors="ignore")
+            if re.search(r"(?m)^\s*MACRO\s+\S+", sample):
+                return "cell_lef"
+            if re.search(r"(?m)^\s*(LAYER|VIA|VIARULE)\s+\S+", sample):
+                return "tech_lef"
+        except OSError:
+            pass
+        return "cell_lef"
     if suffix in {".v", ".sv"}:
         return "verilog"
     if suffix in {".spice", ".cir", ".ckt", ".cdl", ".spi"} or "hspice" in name or "spectre" in name:
@@ -122,8 +134,12 @@ def _category(path: Path) -> str | None:
         return "lvs"
     if "openrcx" in str(path).lower() or name.endswith("rcx_patterns.rules"):
         return "openrcx"
-    if suffix in {".map", ".lyt", ".lyp"}:
-        return "layer_maps"
+    if suffix == ".lyt":
+        return "klayout_tech"
+    if suffix == ".map":
+        return "streamout_map"
+    if suffix == ".lyp":
+        return "layer_properties"
     if suffix in {".pdf", ".md", ".txt"} or name.startswith("readme"):
         return "documentation"
     if "tluplus" in name or suffix == ".tf" or "milkyway" in str(path).lower():
@@ -184,10 +200,84 @@ def _resolve_adapter(content: Path, profile_entry: tuple[dict, Path] | None) -> 
     return None, warnings
 
 
+def _stack_variants(content: Path) -> list[str]:
+    variants: set[str] = set()
+    for path in content.rglob("*"):
+        if not path.is_file() or "generated-adapter" in path.parts or _category(path) != "tech_lef":
+            continue
+        match = re.search(r"(?i)(\d+p\d+m(?:_\d+tm)?(?:_\d+k)?)", str(path))
+        if match:
+            variants.add(match.group(1).upper())
+    return sorted(variants)
+
+
+def _view_consistency(content: Path) -> dict[str, int | bool]:
+    symbols: dict[str, set[str]] = {"lef": set(), "liberty": set(), "verilog": set()}
+    patterns = {
+        "cell_lef": ("lef", re.compile(r"(?m)^\s*MACRO\s+([A-Za-z_][A-Za-z0-9_$]*)")),
+        "liberty": ("liberty", re.compile(r"(?m)\bcell\s*\(\s*[\"']?([A-Za-z_][A-Za-z0-9_$]*)")),
+        "verilog": ("verilog", re.compile(r"(?m)^\s*module\s+([A-Za-z_][A-Za-z0-9_$]*)")),
+    }
+    for path in content.rglob("*"):
+        if not path.is_file() or "generated-adapter" in path.parts:
+            continue
+        category = _category(path)
+        if category not in patterns or path.stat().st_size > 64 * 1024 * 1024:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        key, pattern = patterns[category]
+        symbols[key].update(pattern.findall(text))
+    available = [items for items in symbols.values() if items]
+    common = set.intersection(*available) if available else set()
+    complete = len(available) < 2 or all(items == available[0] for items in available[1:])
+    return {
+        "lef_cells": len(symbols["lef"]), "liberty_cells": len(symbols["liberty"]),
+        "verilog_modules": len(symbols["verilog"]), "common_cells": len(common),
+        "consistent": complete,
+    }
+
+
+def _conversion_state(content: Path, inventory: dict[str, int], stack: str) -> dict:
+    variants = _stack_variants(content)
+    blockers: list[str] = []
+    normalized = re.sub(r"[^A-Z0-9]", "", stack.upper())
+    matching = [item for item in variants if re.sub(r"[^A-Z0-9]", "", item).startswith(normalized)]
+    if len(matching) > 1:
+        blockers.append("exact_stack_required")
+    for category, code in (
+        ("tech_lef", "technology_lef_missing"),
+        ("cell_lef", "cell_lef_missing"),
+        ("liberty", "liberty_missing"),
+        ("verilog", "verilog_models_missing"),
+        ("layout", "cell_layout_missing"),
+        ("klayout_tech", "streamout_map_missing"),
+        ("drc", "open_drc_deck_missing"),
+        ("lvs", "open_lvs_deck_missing"),
+        ("openrcx", "open_rcx_rules_missing"),
+    ):
+        if not inventory.get(category):
+            blockers.append(code)
+    consistency = _view_consistency(content)
+    if not consistency["consistent"]:
+        blockers.append("cell_views_inconsistent")
+    blockers.append("platform_config_validation_required")
+    return {
+        "status": "not_started",
+        "stack_variants": variants,
+        "selected_stack": None,
+        "generated_at": None,
+        "blockers": blockers,
+        "view_consistency": consistency,
+    }
+
+
 def _scan(content: Path) -> tuple[dict[str, int], dict[str, bool], dict | None, list[str]]:
     inventory: dict[str, int] = {}
     for path in content.rglob("*"):
-        if path.is_file():
+        if path.is_file() and "generated-adapter" not in path.parts:
             category = _category(path)
             if category:
                 inventory[category] = inventory.get(category, 0) + 1
@@ -196,7 +286,8 @@ def _scan(content: Path) -> tuple[dict[str, int], dict[str, bool], dict | None, 
     readiness = {
         "simulation": inventory.get("device_models", 0) > 0,
         "synthesis_timing": inventory.get("liberty", 0) > 0 and inventory.get("verilog", 0) > 0,
-        "physical": adapter is not None and inventory.get("cell_lef", 0) > 0,
+        "openroad_inputs": all(inventory.get(item, 0) > 0 for item in ("tech_lef", "cell_lef", "liberty", "verilog")),
+        "physical": adapter is not None and all(inventory.get(item, 0) > 0 for item in ("tech_lef", "cell_lef", "liberty", "layout", "klayout_tech")),
         "drc": inventory.get("drc", 0) > 0,
         "lvs": inventory.get("lvs", 0) > 0,
         "pex": inventory.get("openrcx", 0) > 0,
@@ -209,10 +300,15 @@ def _scan(content: Path) -> tuple[dict[str, int], dict[str, bool], dict | None, 
 
 
 def _public(manifest: dict) -> dict:
-    return {key: manifest[key] for key in (
+    result = {key: manifest[key] for key in (
         "schema", "id", "display_name", "version", "process", "stack", "imported_at",
         "archive_count", "file_count", "size_bytes", "inventory", "readiness", "warnings",
     )}
+    result["conversion"] = manifest.get("conversion", {
+        "status": "not_started", "stack_variants": [], "selected_stack": None,
+        "generated_at": None, "blockers": [],
+    })
+    return result
 
 
 async def import_private_pdk(
@@ -265,6 +361,7 @@ async def import_private_pdk(
             "readiness": readiness,
             "warnings": warnings,
             "adapter": adapter,
+            "conversion": _conversion_state(content, inventory, stack.strip()),
         }
         (incoming / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         shutil.rmtree(packages)
@@ -273,6 +370,59 @@ async def import_private_pdk(
         return _public(manifest)
     except Exception:
         shutil.rmtree(incoming, ignore_errors=True)
+        raise
+    finally:
+        for upload in uploads:
+            await upload.close()
+
+
+async def extend_private_pdk(identifier: str, uploads: list[UploadFile], license_acknowledged: bool) -> dict:
+    if not license_acknowledged:
+        raise ValueError("You must confirm that you are authorized to use the uploaded PDK views")
+    if not uploads or len(uploads) > 24:
+        raise ValueError("Select between 1 and 24 supplementary PDK packages")
+    record, manifest = _record(identifier)
+    token = f"supplement-{uuid.uuid4().hex[:8]}"
+    incoming = record / f".{token}"
+    destination = record / "content" / token
+    staged_content = incoming / "content"
+    packages = incoming / "packages"
+    staged_content.mkdir(parents=True)
+    packages.mkdir(parents=True)
+    uploaded = [0]
+    expanded = [int(manifest.get("size_bytes", 0))]
+    files = [int(manifest.get("file_count", 0))]
+    try:
+        for index, upload in enumerate(uploads):
+            filename = Path(upload.filename or f"package-{index}").name
+            if filename in {"", ".", ".."}:
+                raise ValueError("Invalid upload filename")
+            package = packages / f"{index:02d}-{filename}"
+            with package.open("wb") as output:
+                while chunk := await upload.read(1024 * 1024):
+                    uploaded[0] += len(chunk)
+                    if uploaded[0] > MAX_UPLOAD_BYTES:
+                        raise ValueError("Uploaded PDK exceeds the configured size limit")
+                    output.write(chunk)
+            _unpack(package, staged_content / f"package-{index:02d}", expanded, files)
+        shutil.rmtree(packages)
+        staged_content.rename(destination)
+        shutil.rmtree(incoming, ignore_errors=True)
+        shutil.rmtree(record / "content" / "generated-adapter", ignore_errors=True)
+        inventory, readiness, adapter, warnings = _scan(record / "content")
+        manifest.update({
+            "archive_count": int(manifest.get("archive_count", 0)) + len(uploads),
+            "file_count": files[0], "size_bytes": expanded[0], "inventory": inventory,
+            "readiness": readiness, "adapter": adapter, "warnings": warnings,
+            "conversion": _conversion_state(record / "content", inventory, manifest.get("stack", "")),
+        })
+        temporary = record / "manifest.json.tmp"
+        temporary.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(record / "manifest.json")
+        return _public(manifest)
+    except Exception:
+        shutil.rmtree(incoming, ignore_errors=True)
+        shutil.rmtree(destination, ignore_errors=True)
         raise
     finally:
         for upload in uploads:
@@ -288,6 +438,17 @@ def list_private_pdks() -> list[dict]:
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             if manifest.get("schema") == REGISTRY_SCHEMA and SAFE_ID.fullmatch(manifest.get("id", "")):
+                if "conversion" not in manifest:
+                    content = manifest_path.parent / "content"
+                    inventory, readiness, adapter, warnings = _scan(content)
+                    manifest["inventory"] = inventory
+                    manifest["readiness"] = readiness
+                    manifest["adapter"] = adapter
+                    manifest["warnings"] = warnings
+                    manifest["conversion"] = _conversion_state(content, inventory, manifest.get("stack", ""))
+                    temporary = manifest_path.with_suffix(".json.tmp")
+                    temporary.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+                    temporary.replace(manifest_path)
                 result.append(_public(manifest))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError):
             continue
@@ -301,3 +462,134 @@ def delete_private_pdk(identifier: str) -> None:
     if not (target / "manifest.json").is_file():
         raise FileNotFoundError(identifier)
     shutil.rmtree(target)
+
+
+def _record(identifier: str) -> tuple[Path, dict]:
+    if not SAFE_ID.fullmatch(identifier):
+        raise ValueError("Invalid private PDK identifier")
+    record = registry_root() / identifier
+    manifest_path = record / "manifest.json"
+    if not manifest_path.is_file():
+        raise FileNotFoundError(identifier)
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("Private PDK registry entry is unreadable") from error
+    if manifest.get("schema") != REGISTRY_SCHEMA or manifest.get("id") != identifier:
+        raise ValueError("Private PDK registry entry is invalid")
+    return record, manifest
+
+
+def _copy_views(content: Path, destination: Path, selected_stack: str | None) -> dict[str, int]:
+    folder_by_category = {
+        "tech_lef": "techlef", "cell_lef": "lef", "liberty": "lib", "verilog": "verilog",
+        "layout": "gds", "device_models": "spice", "drc": "drc", "lvs": "lvs",
+        "openrcx": "openrcx", "klayout_tech": "klayout", "streamout_map": "klayout",
+        "layer_properties": "klayout",
+    }
+    copied: dict[str, int] = {}
+    selected_token = selected_stack.lower() if selected_stack else None
+    for source in content.rglob("*"):
+        if not source.is_file() or "generated-adapter" in source.parts:
+            continue
+        category = _category(source)
+        folder = folder_by_category.get(category or "")
+        if not folder:
+            continue
+        if category == "tech_lef" and selected_token:
+            available = re.search(r"(?i)(\d+p\d+m(?:_\d+tm)?(?:_\d+k)?)", str(source))
+            if available and available.group(1).lower() != selected_token:
+                continue
+        target_dir = destination / folder
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / source.name
+        counter = 2
+        while target.exists():
+            target = target_dir / f"{source.stem}-{counter}{source.suffix}"
+            counter += 1
+        shutil.copy2(source, target)
+        copied[category] = copied.get(category, 0) + 1
+    return copied
+
+
+def convert_private_pdk(identifier: str, stack_variant: str | None = None) -> dict:
+    record, manifest = _record(identifier)
+    content = record / "content"
+    inventory, _, existing_adapter, scan_warnings = _scan(content)
+    state = _conversion_state(content, inventory, manifest["stack"])
+    variants = state["stack_variants"]
+    selected = stack_variant.strip().upper() if stack_variant else None
+    if selected and not re.fullmatch(r"[A-Z0-9_.-]{2,80}", selected):
+        raise ValueError("Invalid stack variant")
+    if selected and variants and selected not in variants:
+        raise ValueError("Selected stack variant was not found in the imported technology LEFs")
+    if not selected:
+        normalized = re.sub(r"[^A-Z0-9]", "", manifest["stack"].upper())
+        matches = [item for item in variants if re.sub(r"[^A-Z0-9]", "", item).startswith(normalized)]
+        if len(matches) == 1:
+            selected = matches[0]
+        elif len(variants) == 1:
+            selected = variants[0]
+        elif len(matches) > 1 or len(variants) > 1:
+            raise ValueError("Select the exact metal stack before converting the PDK")
+
+    pdk_name = re.sub(r"[^a-z0-9]+", "_", manifest["display_name"].lower()).strip("_")[:48] or "private_pdk"
+    scl = f"{pdk_name}_sc"
+    adapter_parent = content / "generated-adapter"
+    temporary = Path(tempfile.mkdtemp(prefix=".adapter-", dir=record))
+    try:
+        pdk_dir = temporary / pdk_name
+        library = pdk_dir / "libs.ref" / scl
+        copied = _copy_views(content, library, selected)
+        config_dir = pdk_dir / "libs.tech" / "librelane" / scl
+        config_dir.mkdir(parents=True, exist_ok=True)
+        config = [
+            "# Generated locally by OpenSemiLab BYOPDK. Review before production use.",
+            "set ::env(TECH_LEFS) [dict create nom_* [glob $::env(PDK_ROOT)/$::env(PDK)/libs.ref/$::env(STD_CELL_LIBRARY)/techlef/*]]",
+            "set ::env(CELL_LEFS) [glob $::env(PDK_ROOT)/$::env(PDK)/libs.ref/$::env(STD_CELL_LIBRARY)/lef/*]",
+            "set ::env(LIB) [dict create nom_* [glob $::env(PDK_ROOT)/$::env(PDK)/libs.ref/$::env(STD_CELL_LIBRARY)/lib/*]]",
+            "set ::env(CELL_VERILOG_MODELS) [glob $::env(PDK_ROOT)/$::env(PDK)/libs.ref/$::env(STD_CELL_LIBRARY)/verilog/*]",
+        ]
+        if copied.get("layout"):
+            config.append("set ::env(CELL_GDS) [glob $::env(PDK_ROOT)/$::env(PDK)/libs.ref/$::env(STD_CELL_LIBRARY)/gds/*]")
+        if copied.get("klayout_tech"):
+            config.append("set ::env(KLAYOUT_TECH) [lindex [glob $::env(PDK_ROOT)/$::env(PDK)/libs.ref/$::env(STD_CELL_LIBRARY)/klayout/*.lyt] 0]")
+        (config_dir / "config.tcl").write_text("\n".join(config) + "\n", encoding="utf-8")
+        (pdk_dir / "libs.tech" / "librelane" / "config.tcl").write_text(
+            "# OpenSemiLab generated private PDK entry point.\n", encoding="utf-8"
+        )
+        (temporary / "opensemilab-pdk.json").write_text(json.dumps({
+            "schema": PROFILE_SCHEMA, "pdk_root": ".", "pdk": pdk_name, "scl": scl,
+        }, indent=2) + "\n", encoding="utf-8")
+        blockers = [code for code in state["blockers"] if code != "exact_stack_required"]
+        status = "generated_with_blockers" if blockers else "generated"
+        conversion = {
+            **state, "status": status, "selected_stack": selected,
+            "generated_at": datetime.now(UTC).isoformat(), "blockers": blockers,
+            "normalized_views": copied,
+        }
+        (temporary / "conversion-report.json").write_text(json.dumps(conversion, indent=2) + "\n", encoding="utf-8")
+        if adapter_parent.exists():
+            shutil.rmtree(adapter_parent)
+        temporary.rename(adapter_parent)
+    except Exception:
+        shutil.rmtree(temporary, ignore_errors=True)
+        raise
+
+    adapter = {"pdk_root": "generated-adapter", "pdk": pdk_name, "scl": scl}
+    manifest["adapter"] = adapter
+    manifest["conversion"] = conversion
+    manifest["warnings"] = [warning for warning in scan_warnings if not warning.startswith("No complete LibreLane")]
+    manifest["readiness"] = {
+        "simulation": inventory.get("device_models", 0) > 0,
+        "synthesis_timing": inventory.get("liberty", 0) > 0 and inventory.get("verilog", 0) > 0,
+        "openroad_inputs": all(inventory.get(item, 0) > 0 for item in ("tech_lef", "cell_lef", "liberty", "verilog")),
+        "physical": not any(code in conversion["blockers"] for code in ("technology_lef_missing", "cell_lef_missing", "liberty_missing", "verilog_models_missing", "cell_layout_missing", "streamout_map_missing", "cell_views_inconsistent", "platform_config_validation_required")),
+        "drc": inventory.get("drc", 0) > 0,
+        "lvs": inventory.get("lvs", 0) > 0,
+        "pex": inventory.get("openrcx", 0) > 0,
+    }
+    temp_manifest = record / "manifest.json.tmp"
+    temp_manifest.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    temp_manifest.replace(record / "manifest.json")
+    return _public(manifest)
