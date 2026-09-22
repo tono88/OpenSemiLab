@@ -45,6 +45,10 @@ export interface PhysicalSummary {
   hold_worst_slack_ns?:number|null
   max_slew_violations?:number|null
   max_cap_violations?:number|null
+  max_fanout_violations?:number|null
+  setup_violations?:number|null
+  hold_violations?:number|null
+  unmapped_cells?:number|null
   lvs_errors?:number|null
   antenna_violations?:number|null
   power_grid_violations?:number|null
@@ -58,8 +62,17 @@ export interface PhysicalSummary {
   signoff_status?:'pass'|'fail'|'review'
   production_ready?:boolean
   handoff_level?:string
+  readiness_level?:'implementation_failed'|'implementation_review'|'hardened_block_candidate'
   constraint_scope?:string
   pdk_distribution_status?:string
+  tapeout_readiness?:{
+    schema:string
+    status:'pass'|'fail'|'review'
+    level:string
+    production_ready:boolean
+    checks:{id:string;label:string;status:'pass'|'fail'|'review'|'not_run';evidence:string}[]
+    disclaimer:string
+  }
 }
 
 export interface RunResult {

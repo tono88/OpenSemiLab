@@ -208,6 +208,26 @@ Index   v-sweep   v(a)       v(y)
         self.assertIn("netlists/top.pnl.v", names)
         self.assertIn("timing/top.spef", names)
         self.assertIn("logs/execution.log", names)
+        self.assertIn("reports/tapeout-readiness.json", names)
+        self.assertIn("configuration/integration-manifest.json", names)
+        self.assertIn("CHECKSUMS.sha256", names)
+
+    def test_integration_manifest_hashes_and_classifies_final_views(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            job = Path(temporary)
+            final = job / "final"
+            final.mkdir()
+            (final / "top.gds").write_bytes(b"layout")
+            (final / "top.pnl.v").write_text("module top; endmodule\n", encoding="utf-8")
+            (final / "top.cdl").write_text(".subckt top VDD VSS\n.ends\n", encoding="utf-8")
+            manifest = worker.integration_manifest(job, {
+                "DESIGN_NAME": "top", "PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd",
+            })
+
+        self.assertEqual(manifest["schema"], "opensemilab.integration-manifest/v1")
+        self.assertEqual(len(manifest["files"]), 3)
+        self.assertTrue(all(len(item["sha256"]) == 64 for item in manifest["files"]))
+        self.assertIn("lvs_netlist", {item["role"] for item in manifest["files"]})
 
     def test_physical_summary_reports_real_utilization_and_signoff_blockers(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -242,6 +262,9 @@ Index   v-sweep   v(a)       v(y)
         self.assertAlmostEqual(summary["estimated_critical_path_ns"], 23.62677)
         self.assertEqual(summary["signoff_status"], "fail")
         self.assertIn("maximum slew: 1072", summary["signoff_blockers"])
+        self.assertEqual(summary["tapeout_readiness"]["status"], "fail")
+        self.assertFalse(summary["tapeout_readiness"]["production_ready"])
+        self.assertIn("rtl_equivalence", {item["id"] for item in summary["tapeout_readiness"]["checks"]})
 
     def test_relative_floorplan_reads_final_die_dimensions(self):
         with tempfile.TemporaryDirectory() as temporary:

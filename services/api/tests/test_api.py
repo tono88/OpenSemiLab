@@ -95,6 +95,18 @@ def test_sensor_interface_connects_digital_and_spice_execution():
     assert {"requirements", "frontend", "digital"} <= ready_stages
 
 
+def test_gt2n_is_accepted_as_research_scaffold_not_physical_runner():
+    response = client.post("/api/v1/design/plan", json={
+        "name": "GT2N benchmark", "kind": "microcontroller", "pdk": "gt2n",
+        "level": "engineering", "language": "systemverilog"
+    })
+    assert response.status_code == 200
+    result = response.json()
+    assert "not connected" in result["notice"]
+    physical = next(stage for stage in result["stages"] if stage["id"] == "physical")
+    assert physical["status"] == "adapter_pending"
+
+
 def test_physical_job_requires_bounded_options():
     missing = client.post("/api/v1/eda/jobs", json={
         "action": "physical", "top": "top", "sources": {"rtl/top.sv": "module top; endmodule"}

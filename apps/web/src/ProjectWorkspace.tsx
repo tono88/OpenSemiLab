@@ -15,6 +15,7 @@ function artifactKind(name:string):ArtifactKind {
   if(['.sdf','.sdc','.spef'].some(extension=>lower.endsWith(extension))) return 'timing'
   if(lower.endsWith('.vcd')) return 'waveform'
   if(['.v','.sv'].some(extension=>lower.endsWith(extension))) return 'netlist'
+  if(['physical-summary.json','tapeout-readiness.json','execution-diagnostics.json'].some(filename=>lower.endsWith(filename))) return 'report'
   if(['.rpt','.log','.csv'].some(extension=>lower.endsWith(extension))) return 'report'
   if(lower.endsWith('.json')) return 'configuration'
   return 'other'
