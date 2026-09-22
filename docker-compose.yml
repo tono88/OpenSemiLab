@@ -21,7 +21,10 @@ services:
       - "9000"
     environment:
       OPENSEMILAB_JOB_TIMEOUT: "90"
-      OPENSEMILAB_PHYSICAL_TIMEOUT: "1800"
+      # No total wall-clock limit for an active LibreLane flow. A separate
+      # inactivity watchdog still stops a genuinely silent/stuck process.
+      OPENSEMILAB_PHYSICAL_TIMEOUT: "0"
+      OPENSEMILAB_PHYSICAL_IDLE_TIMEOUT: "3600"
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9000/health', timeout=3)"]
       interval: 10s
