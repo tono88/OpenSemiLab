@@ -27,7 +27,7 @@ Open-source EDA and multiphysics tools are powerful, but they expose different i
 - Enter a dedicated **Design Studio** for complete IC and system projects.
 - Create a tool-aware design plan for microcontrollers/SoCs, smart sensor interfaces, analog blocks, RF front-ends, standard cells/IP, and FPGA prototypes.
 - Select SKY130, GF180MCU, IHP SG13G2, IHP SG13CMOS5L, or the research-only GT2N profile with an explicit integration/maturity notice and generate a reproducible staged manifest. SKY130/GF180 have the integrated digital path; IHP paths remain partial or scaffold-only, and GT2N is not exposed as an executable physical route.
-- Register user-supplied private PDK packages in a local BYOPDK volume, inspect format/readiness coverage, and reference them from projects without redistributing licensed collateral. RTL-to-GDSII remains gated on a validated local LibreLane/OpenPDKs adapter. See [docs/private-pdks.md](docs/private-pdks.md).
+- Register user-supplied private PDK packages in a local BYOPDK volume, inspect format/readiness coverage, generate an isolated LibreLane/OpenPDKs adapter from open-compatible vendor views, and reference it from projects without redistributing licensed collateral. Exact metal-stack selection and missing GDS/sign-off inputs remain explicit gates. See [docs/private-pdks.md](docs/private-pdks.md).
 - Map each stage to relevant IIC-OSIC-TOOLS engines while clearly distinguishing connected and pending adapters.
 - Edit SystemVerilog in the browser and run Verible/Verilator lint, Icarus Verilog simulation, and Yosys synthesis in IIC-OSIC-TOOLS.
 - Inspect automatically captured VCD waveforms with signal selection, zoom, and time-window navigation.
