@@ -105,12 +105,21 @@ def build_project(owner: str, repository: str, branch: str, members: list[tarfil
     top = infer_top(files, repository)
     language = "systemverilog" if any(item["path"].lower().endswith(".sv") for item in hdl) else "verilog" if hdl else "text"
     kind = "fpga_prototype" if hdl else "blank_project"
+    is_picorv32 = top.lower().startswith("picorv32") or any("picorv32" in item["content"].lower() for item in hdl)
+    physical = {
+        "clock_port": "clk", "clock_period_ns": 25,
+        "die_width_um": 1200 if is_picorv32 else 120,
+        "die_height_um": 1200 if is_picorv32 else 120,
+        "core_utilization_pct": 35 if is_picorv32 else 40,
+        "timing_effort": "balanced",
+    }
     manifest = {
         "schema": "opensemilab.project/v3",
         "name": repository,
         "kind": kind,
         "pdk": "sky130A",
         "execution": {"rtl_top": top, "fpga_top": top} if hdl else {},
+        "physical": physical,
         "provenance": {
             "repository": f"https://github.com/{owner}/{repository}",
             "branch": branch,
