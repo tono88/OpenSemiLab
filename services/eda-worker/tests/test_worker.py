@@ -349,6 +349,17 @@ Index   v-sweep   v(a)       v(y)
         self.assertFalse(result["timed_out"])
         self.assertIn("Stopped before disk exhaustion", result["output"])
 
+    def test_streaming_command_preserves_result_when_process_is_already_reaped(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.object(worker.subprocess.Popen, "wait", side_effect=ProcessLookupError(3, "No such process")):
+                result = worker.run_streaming_command(
+                    ["python3", "-u", "-c", "print('signoff complete')"],
+                    Path(temporary), idle_timeout_seconds=60,
+                )
+
+        self.assertEqual(result["exit_code"], 0)
+        self.assertIn("signoff complete", result["output"])
+
     def test_physical_stage_detector_reports_furthest_known_stage(self):
         stage = worker.detect_physical_stage("Yosys synthesis complete\nOpenROAD global placement\nClock tree synthesis")
         self.assertEqual(stage["stage"], "cts")
