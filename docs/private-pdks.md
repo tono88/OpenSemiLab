@@ -17,7 +17,21 @@ This registry is intended for a self-hosted installation protected by the instit
 
 The scanner recognizes Liberty, LEF, Verilog, SPICE/CDL, GDS/OASIS, parasitic data, layer maps, and open DRC/LVS/OpenRCX inputs. Commercial-tool files may be inventoried, but they are never treated as automatically portable.
 
-Physical execution is enabled only for an OpenPDKs-shaped installation containing:
+The **Prepare open adapter** action copies recognized views into an isolated, generated OpenPDKs/LibreLane layout and writes a local LibreLane configuration. If multiple technology LEFs match the process (for example, different metal or top-metal variants), conversion stops until the operator selects the exact stack. Generated adapters and reports stay inside the private Docker volume.
+
+Readiness is deliberately staged:
+
+| Gate | Required evidence |
+|---|---|
+| Simulation | SPICE/HSPICE-compatible models |
+| Synthesis/timing | Liberty and Verilog cell models |
+| OpenROAD inputs | technology LEF, cell LEF, Liberty, and Verilog |
+| Physical RTL-to-GDS | OpenROAD inputs plus cell GDS/OASIS, a stream-out technology map, and a reviewed platform configuration (power pins, cell roles, placement site, routing layers, tracks, and PDN) |
+| DRC/LVS/PEX | separate open, validated rule decks for each check |
+
+The converter does not claim that Synopsys binary or sign-off formats are losslessly translatable. Compiled `.db` files need an authorized Liberty source/export; Milkyway libraries need an authorized GDS/LEF export; TLUPlus and proprietary DRC/LVS/PEX decks require a separately licensed, calibrated open-tool port. A generated GDS is not equivalent to foundry sign-off.
+
+Physical execution is enabled only for an OpenPDKs-shaped installation containing the required physical views:
 
 ```text
 <pdk-root>/<pdk>/libs.ref/<scl>/

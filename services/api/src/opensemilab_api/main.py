@@ -10,7 +10,7 @@ from opensemilab_api.eda import EdaRunRequest
 from opensemilab_api.engines import ENGINES
 from opensemilab_api.github_import import import_public_github_repository
 from opensemilab_api.models import EngineCapability, Experiment, SimulationResult
-from opensemilab_api.pdk_registry import delete_private_pdk, import_private_pdk, list_private_pdks
+from opensemilab_api.pdk_registry import convert_private_pdk, delete_private_pdk, extend_private_pdk, import_private_pdk, list_private_pdks
 from pydantic import BaseModel, Field
 
 app = FastAPI(
@@ -30,6 +30,10 @@ app.add_middleware(
 
 class GithubImportRequest(BaseModel):
     url: str = Field(min_length=20, max_length=300)
+
+
+class PdkConversionRequest(BaseModel):
+    stack_variant: str | None = Field(default=None, max_length=80)
 
 
 @app.get("/api/health")
@@ -86,6 +90,30 @@ async def import_pdk(
 def delete_pdk(pdk_id: str) -> None:
     try:
         delete_private_pdk(pdk_id)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Private PDK was not found") from error
+
+
+@app.post("/api/v1/pdks/{pdk_id}/convert")
+def convert_pdk(pdk_id: str, request: PdkConversionRequest) -> dict:
+    try:
+        return convert_private_pdk(pdk_id, request.stack_variant)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Private PDK was not found") from error
+
+
+@app.post("/api/v1/pdks/{pdk_id}/files")
+async def add_pdk_files(
+    pdk_id: str,
+    files: list[UploadFile] = File(...),
+    license_acknowledged: bool = Form(False),
+) -> dict:
+    try:
+        return await extend_private_pdk(pdk_id, files, license_acknowledged)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except FileNotFoundError as error:
