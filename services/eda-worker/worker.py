@@ -14,6 +14,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import traceback
 import uuid
 from collections import deque
 from base64 import b64encode
@@ -36,6 +37,17 @@ MAX_ARTIFACT_BUNDLE_BYTES = 40_000_000
 MAX_WAVEFORM_BYTES = 5_000_000
 JOBS: dict[str, dict[str, Any]] = {}
 JOBS_LOCK = threading.Lock()
+JOB_CANCEL_EVENTS: dict[str, threading.Event] = {}
+
+STRICT_NUMBER = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
+PHYSICAL_STAGE_RULES = [
+    ("synthesis", "Synthesis", "Yosys", (r"\byosys\b", r"synth(?:esis)?", r"jsonheader")),
+    ("floorplan", "Floorplan", "OpenROAD", (r"floorplan", r"tapcell", r"pdn", r"io[_ -]?placement")),
+    ("placement", "Placement", "OpenROAD", (r"global[_ -]?placement", r"detailed[_ -]?placement", r"resizer")),
+    ("cts", "CTS", "OpenROAD", (r"clock tree", r"\bcts\b", r"clocktree")),
+    ("routing", "Routing", "OpenROAD", (r"global[_ -]?routing", r"detailed[_ -]?routing", r"\bgrt\b", r"\bdrt\b")),
+    ("signoff", "Sign-off", "OpenSTA / KLayout / Magic / Netgen", (r"opensta", r"sign[ -]?off", r"klayout", r"magic", r"netgen", r"\blvs\b", r"stream[_ -]?out")),
+]
 
 TOOL_BINARIES = {
     "verilator": "verilator",
@@ -262,6 +274,74 @@ def run_command(
         return {"exit_code": 124, "output": output + f"\nTimed out after {timeout_seconds}s", "duration_ms": round((time.monotonic() - started) * 1000), "timed_out": True}
 
 
+def detect_physical_stage(output: str) -> dict[str, str]:
+    """Infer the furthest physical-flow stage reached from bounded console output."""
+    lowered = output.lower()
+    detected = {"stage": "preparing", "stage_label": "Preparing", "tool": "LibreLane"}
+    for stage, label, tool, expressions in PHYSICAL_STAGE_RULES:
+        if any(re.search(expression, lowered, re.IGNORECASE) for expression in expressions):
+            detected = {"stage": stage, "stage_label": label, "tool": tool}
+    return detected
+
+
+def classify_physical_log(output: str) -> dict[str, Any]:
+    """Return a conservative, read-only diagnostic summary; never changes the design."""
+    groups: dict[str, dict[str, Any]] = {}
+    for line in output.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if re.search(r"\b(error|fatal|failed|exception|traceback)\b", stripped, re.IGNORECASE):
+            severity, category = "critical", "errors"
+        elif re.search(r"\bwarn(?:ing)?\b", stripped, re.IGNORECASE):
+            severity, category = "warning", "warnings"
+        else:
+            continue
+        normalized = re.sub(r"\b\d+(?:\.\d+)?\b", "#", stripped)[:240]
+        key = f"{severity}:{normalized}"
+        item = groups.setdefault(key, {"severity": severity, "category": category, "message": stripped[:500], "count": 0})
+        item["count"] += 1
+    items = sorted(groups.values(), key=lambda item: (item["severity"] != "critical", -item["count"]))
+    return {
+        "schema": "opensemilab.log-diagnostics/v1",
+        "critical_count": sum(item["count"] for item in items if item["severity"] == "critical"),
+        "warning_count": sum(item["count"] for item in items if item["severity"] == "warning"),
+        "groups": items[:100],
+    }
+
+
+def descendant_pids(root_pid: int) -> list[int]:
+    found: list[int] = []
+    pending = [root_pid]
+    while pending and len(found) < 512:
+        pid = pending.pop()
+        if pid in found:
+            continue
+        found.append(pid)
+        try:
+            children = Path(f"/proc/{pid}/task/{pid}/children").read_text(encoding="ascii").split()
+            pending.extend(int(child) for child in children)
+        except (FileNotFoundError, PermissionError, ValueError):
+            continue
+    return found
+
+
+def process_resource_sample(root_pid: int) -> tuple[int, int, list[int]]:
+    """Return process CPU ticks, resident KiB and descendants using Linux procfs."""
+    ticks = 0
+    rss_kib = 0
+    pids = descendant_pids(root_pid)
+    page_kib = os.sysconf("SC_PAGE_SIZE") // 1024
+    for pid in pids:
+        try:
+            fields = Path(f"/proc/{pid}/stat").read_text(encoding="ascii").split()
+            ticks += int(fields[13]) + int(fields[14])
+            rss_kib += int(fields[23]) * page_kib
+        except (FileNotFoundError, PermissionError, ValueError, IndexError):
+            continue
+    return ticks, rss_kib, pids
+
+
 def run_streaming_command(
     command: list[str],
     cwd: Path,
@@ -269,6 +349,7 @@ def run_streaming_command(
     idle_timeout_seconds: int = PHYSICAL_IDLE_TIMEOUT_SECONDS,
     env_overrides: dict[str, str] | None = None,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
     """Run a long job while reporting liveness and bounded output.
 
@@ -278,6 +359,7 @@ def run_streaming_command(
     """
     started = time.monotonic()
     last_output = started
+    last_activity = started
     chunks: deque[str] = deque()
     output_size = 0
     process = subprocess.Popen(
@@ -304,7 +386,11 @@ def run_streaming_command(
     threading.Thread(target=read_output, daemon=True).start()
     stream_closed = False
     termination_reason = ""
+    termination_kind: str | None = None
     last_progress = 0.0
+    previous_ticks = 0
+    previous_sample_at = started
+    clock_ticks = os.sysconf("SC_CLK_TCK")
 
     def append_output(text: str) -> None:
         nonlocal output_size
@@ -329,19 +415,39 @@ def run_streaming_command(
                     else:
                         append_output(block.decode("utf-8", errors="replace"))
                         last_output = time.monotonic()
+                        last_activity = last_output
 
             now = time.monotonic()
+            ticks, rss_kib, pids = process_resource_sample(process.pid)
+            sample_seconds = max(now - previous_sample_at, 0.001)
+            cpu_percent = max(0.0, ((ticks - previous_ticks) / clock_ticks) / sample_seconds * 100) if previous_ticks else 0.0
+            previous_ticks, previous_sample_at = ticks, now
+            if cpu_percent >= 1.0:
+                last_activity = now
             if timeout_seconds > 0 and now - started >= timeout_seconds:
                 termination_reason = f"Timed out after {timeout_seconds}s"
-            elif idle_timeout_seconds > 0 and now - last_output >= idle_timeout_seconds:
-                termination_reason = f"Stopped after {idle_timeout_seconds}s without new output"
+                termination_kind = "total"
+            elif cancel_event is not None and cancel_event.is_set():
+                termination_reason = "Cancelled by the user"
+                termination_kind = "cancelled"
+            elif idle_timeout_seconds > 0 and now - last_activity >= idle_timeout_seconds:
+                termination_reason = f"Stopped after {idle_timeout_seconds}s without output or CPU activity"
+                termination_kind = "idle"
 
             if progress_callback and (now - last_progress >= 1.0 or stream_closed):
+                stage = detect_physical_stage(snapshot())
                 progress_callback({
                     "elapsed_seconds": round(now - started),
                     "last_output_seconds_ago": round(now - last_output),
                     "live_output": snapshot(),
                     "process_alive": process.poll() is None,
+                    "last_activity_seconds_ago": round(now - last_activity),
+                    "pid": process.pid,
+                    "child_pids": pids[1:],
+                    "cpu_percent": round(cpu_percent, 1),
+                    "memory_mb": round(rss_kib / 1024, 1),
+                    "activity_state": "working" if cpu_percent >= 1.0 else ("waiting-output" if now - last_output < 30 else "quiet"),
+                    **stage,
                 })
                 last_progress = now
 
@@ -354,7 +460,6 @@ def run_streaming_command(
                         os.killpg(process.pid, signal.SIGKILL)
                     except ProcessLookupError:
                         pass
-                break
         process.wait()
     finally:
         process.stdout.close()
@@ -363,11 +468,13 @@ def run_streaming_command(
     if termination_reason:
         output = (output + ("\n" if output else "") + termination_reason)[-MAX_OUTPUT:]
     return {
-        "exit_code": 124 if termination_reason else process.returncode,
+        "exit_code": 130 if termination_kind == "cancelled" else (124 if termination_reason else process.returncode),
         "output": output,
         "duration_ms": round((time.monotonic() - started) * 1000),
-        "timed_out": bool(termination_reason),
-        "timeout_kind": "idle" if termination_reason.startswith("Stopped") else ("total" if termination_reason else None),
+        "timed_out": termination_kind in {"idle", "total"},
+        "timeout_kind": termination_kind if termination_kind in {"idle", "total"} else None,
+        "cancelled": termination_kind == "cancelled",
+        **detect_physical_stage(output),
     }
 
 
@@ -534,8 +641,8 @@ def physical_summary(job_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
     }
     text_files = [path for root in (job_dir / "final", job_dir / "runs") if root.exists() for path in root.rglob("*") if path.is_file() and path.suffix.lower() in {".def", ".rpt", ".log", ".csv", ".json"}]
     patterns = {
-        "wns_ns": [r"timing__setup__wns[\s,:=]+(-?[0-9.eE+]+)", r"\bWNS\b[^-+0-9]*(-?[0-9.eE+]+)"],
-        "tns_ns": [r"timing__setup__tns[\s,:=]+(-?[0-9.eE+]+)", r"\bTNS\b[^-+0-9]*(-?[0-9.eE+]+)"],
+        "wns_ns": [rf"timing__setup__wns[\t ,:=]+({STRICT_NUMBER})", rf"\bWNS\b[^\n0-9.+-]*({STRICT_NUMBER})"],
+        "tns_ns": [rf"timing__setup__tns[\t ,:=]+({STRICT_NUMBER})", rf"\bTNS\b[^\n0-9.+-]*({STRICT_NUMBER})"],
         "drc_violations": [r"route__drc_errors[\s,:=]+([0-9]+)", r"drc[^\n]{0,30}(?:violations|errors)[^0-9]*([0-9]+)"],
     }
     for path in text_files:
@@ -552,8 +659,10 @@ def physical_summary(job_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
             for expression in expressions:
                 match = re.search(expression, content, re.IGNORECASE)
                 if match:
-                    summary[key] = int(match.group(1)) if key == "drc_violations" else float(match.group(1))
-                    break
+                    value = parse_numeric(match.group(1))
+                    if value is not None:
+                        summary[key] = int(value) if key == "drc_violations" else value
+                        break
     return summary
 
 
@@ -719,6 +828,7 @@ def execute_adapter(action: str, payload: dict[str, Any], sources: dict[str, str
 def execute(
     payload: dict[str, Any],
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
     action = payload.get("action")
     allowed_actions = {"lint", "simulate", "synthesize", "spice", "vhdl", "physical"} | ADAPTER_ACTIONS
@@ -809,10 +919,33 @@ def execute(
                 PHYSICAL_IDLE_TIMEOUT_SECONDS,
                 env_overrides={"PDK": pdk, "STD_CELL_LIBRARY": scl},
                 progress_callback=progress_callback,
+                cancel_event=cancel_event,
             )
-            artifacts = physical_artifacts(job_dir)
-            summary = physical_summary(job_dir, config)
+            diagnostics: list[dict[str, str]] = []
+            try:
+                artifacts = physical_artifacts(job_dir)
+            except Exception as error:
+                artifacts = []
+                diagnostics.append({"phase": "artifact_collection", "error": f"{type(error).__name__}: {error}"})
+            try:
+                summary = physical_summary(job_dir, config)
+            except Exception as error:
+                summary = {
+                    "schema": "opensemilab.physical-summary/v1", "pdk": pdk, "scl": scl,
+                    "die_area_um2": die_width * die_height, "target_utilization_pct": utilization,
+                    "cell_count": None, "wns_ns": None, "tns_ns": None, "drc_violations": None,
+                }
+                diagnostics.append({"phase": "metric_parsing", "error": f"{type(error).__name__}: {error}"})
+            log_diagnostics = classify_physical_log(result["output"])
+            diagnostic_payload = {
+                "schema": "opensemilab.execution-diagnostics/v1",
+                "stage": result.get("stage"), "tool": result.get("tool"),
+                "postprocessing_errors": diagnostics,
+                "log": log_diagnostics,
+            }
             summary_content = json.dumps(summary, indent=2) + "\n"
+            artifacts.insert(0, text_artifact("execution-diagnostics.json", json.dumps(diagnostic_payload, indent=2) + "\n", "application/json"))
+            artifacts.insert(0, text_artifact("execution.log", result["output"]))
             artifacts.insert(0, text_artifact("physical-summary.json", summary_content, "application/json"))
             artifacts.insert(0, {"name": "physical-config.json", "media_type": "application/json", "encoding": "utf-8", "content": json.dumps(config, indent=2) + "\n", "size_bytes": len(json.dumps(config))})
             return {
@@ -822,6 +955,7 @@ def execute(
                 "pdk": pdk,
                 "scl": scl,
                 "summary": summary,
+                "diagnostics": diagnostic_payload,
                 "success": result["exit_code"] == 0,
                 **result,
                 "artifacts": artifacts,
@@ -942,6 +1076,19 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(404, {"error": "not found"})
 
     def do_POST(self) -> None:
+        cancel_match = re.fullmatch(r"/jobs/([A-Za-z0-9]{1,32})/cancel", self.path)
+        if cancel_match:
+            job_id = cancel_match.group(1)
+            with JOBS_LOCK:
+                job = JOBS.get(job_id)
+                event = JOB_CANCEL_EVENTS.get(job_id)
+                if job is None:
+                    self.send_json(404, {"error": "job not found"}); return
+                if job.get("status") not in {"queued", "running"} or event is None:
+                    self.send_json(409, {"error": "job is no longer active"}); return
+                event.set()
+                job["cancellation_requested_at"] = time.time()
+            self.send_json(202, {"job_id": job_id, "status": "cancelling"}); return
         if self.path not in {"/run", "/jobs"}:
             self.send_json(404, {"error": "not found"}); return
         try:
@@ -957,7 +1104,7 @@ class Handler(BaseHTTPRequestHandler):
                     if any(job.get("status") in {"queued", "running"} for job in JOBS.values()):
                         raise RuntimeError("another physical implementation job is already active")
                     if len(JOBS) >= 5:
-                        terminal = [key for key, job in JOBS.items() if job.get("status") in {"completed", "failed"}]
+                        terminal = [key for key, job in JOBS.items() if job.get("status") in {"completed", "failed", "cancelled"}]
                         if terminal:
                             oldest = min(terminal, key=lambda key: JOBS[key].get("created_at", 0))
                             JOBS.pop(oldest, None)
@@ -972,6 +1119,7 @@ class Handler(BaseHTTPRequestHandler):
                         "live_output": "",
                         "process_alive": False,
                     }
+                    JOB_CANCEL_EVENTS[job_id] = threading.Event()
                 threading.Thread(target=run_background_job, args=(job_id, payload), daemon=True).start()
                 self.send_json(202, {"job_id": job_id, "action": "physical", "status": "queued"})
             else:
@@ -999,12 +1147,32 @@ def run_background_job(job_id: str, payload: dict[str, Any]) -> None:
                     job.update(progress)
                     job["heartbeat_at"] = time.time()
 
-        result = execute(payload, progress_callback=report_progress)
+        result = execute(payload, progress_callback=report_progress, cancel_event=JOB_CANCEL_EVENTS[job_id])
+        result["job_id"] = job_id
+        status = "cancelled" if result.get("cancelled") else ("completed" if result["success"] else "failed")
         with JOBS_LOCK:
-            JOBS[job_id].update(status="completed" if result["success"] else "failed", result=result, finished_at=time.time())
+            JOBS[job_id].update(status=status, result=result, process_alive=False, finished_at=time.time())
     except Exception as error:
+        diagnostic = "".join(traceback.format_exception(type(error), error, error.__traceback__))
         with JOBS_LOCK:
-            JOBS[job_id].update(status="failed", error=str(error), finished_at=time.time())
+            job = JOBS[job_id]
+            live_output = str(job.get("live_output", ""))
+            message = f"{type(error).__name__}: {error}"
+            output = (live_output + ("\n" if live_output else "") + f"[OpenSemiLab] Internal failure after the last captured output: {message}")[-MAX_OUTPUT:]
+            fallback = {
+                "job_id": job_id, "action": "physical", "engine": "LibreLane/OpenROAD",
+                "success": False, "exit_code": 70, "output": output,
+                "duration_ms": round(float(job.get("elapsed_seconds", 0)) * 1000),
+                "artifacts": [
+                    text_artifact("execution.log", output),
+                    text_artifact("execution-diagnostics.txt", diagnostic),
+                ],
+                "diagnostics": {"schema": "opensemilab.execution-diagnostics/v1", "internal_error": message},
+            }
+            job.update(status="failed", error=message, result=fallback, process_alive=False, finished_at=time.time())
+    finally:
+        with JOBS_LOCK:
+            JOB_CANCEL_EVENTS.pop(job_id, None)
 
 
 if __name__ == "__main__":
