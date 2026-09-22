@@ -6,10 +6,12 @@ COPY worker.py ./worker.py
 COPY entrypoint.sh ./entrypoint.sh
 # Windows checkouts may convert shell scripts to CRLF. Normalize the copied
 # file inside the Linux image so the shebang never becomes "bash\r".
-RUN sed -i 's/\r$//' ./entrypoint.sh && chmod 755 ./entrypoint.sh
+RUN sed -i 's/\r$//' ./entrypoint.sh \
+    && chmod 755 ./entrypoint.sh \
+    && install -d -o 1000 -g 1000 -m 0750 /var/lib/opensemilab-jobs
 ENV HOME=/headless \
     USER=designer \
-    OPENSEMILAB_WORK_ROOT=/tmp/opensemilab-jobs
+    OPENSEMILAB_WORK_ROOT=/var/lib/opensemilab-jobs
 EXPOSE 9000
 USER 1000:1000
 ENTRYPOINT ["/opt/opensemilab-worker/entrypoint.sh"]
