@@ -134,7 +134,11 @@ def test_private_pdk_profile_resolves_relative_librelane_adapter(tmp_path, monke
     }
     with zipfile.ZipFile(archive, "w") as bundle:
         bundle.writestr("opensemilab-pdk.json", json.dumps(profile))
-        bundle.writestr("local180/libs.ref/cells7t/lef/cells.lef", "VERSION 5.8 ;\nEND LIBRARY")
+        bundle.writestr("local180/libs.ref/cells7t/techlef/process.tlef", "VERSION 5.8 ;\nLAYER M1\n TYPE ROUTING ;\nEND M1\nEND LIBRARY")
+        bundle.writestr("local180/libs.ref/cells7t/lef/cells.lef", "VERSION 5.8 ;\nMACRO INV\nEND INV\nEND LIBRARY")
+        bundle.writestr("local180/libs.ref/cells7t/lib/cells.lib", "library(test) {}")
+        bundle.writestr("local180/libs.ref/cells7t/gds/cells.gds", "test-layout")
+        bundle.writestr("local180/libs.ref/cells7t/klayout/process.lyt", "<technology/>")
         bundle.writestr("local180/libs.tech/librelane/config.tcl", "set ::env(PDK) local180")
     response = client.post(
         "/api/v1/pdks/import",
@@ -149,6 +153,72 @@ def test_private_pdk_profile_resolves_relative_librelane_adapter(tmp_path, monke
     assert pdk["readiness"]["physical"] is True
     assert "adapter" not in pdk
     assert "local180" not in json.dumps(pdk)
+
+
+def test_private_pdk_conversion_requires_exact_stack_and_stays_honest(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENSEMILAB_PDK_ROOT", str(tmp_path / "pdks"))
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as bundle:
+        for stack in ("1p5m_1tm_9k", "1p5m_1tm_11k"):
+            bundle.writestr(
+                f"lef_techfiles/tech/GL150M_{stack}.lef",
+                "VERSION 5.8 ;\nLAYER M1\n TYPE ROUTING ;\nEND M1\nEND LIBRARY",
+            )
+        bundle.writestr("lef/cells.lef", "VERSION 5.8 ;\nMACRO INV\n SITE core ;\nEND INV\nEND LIBRARY")
+        bundle.writestr("lib/cells.lib", "library(test) { cell(INV) {} }")
+        bundle.writestr("verilog/cells.v", "module INV(input A, output Y); assign Y=~A; endmodule")
+    imported = client.post(
+        "/api/v1/pdks/import",
+        data={
+            "display_name": "Private 150 kit", "version": "1.0", "process": "150 nm",
+            "stack": "1P5M_1TM", "license_acknowledged": "true",
+        },
+        files=[("files", ("kit.zip", archive.getvalue(), "application/zip"))],
+    )
+    assert imported.status_code == 201
+    pdk = imported.json()
+    assert pdk["inventory"]["tech_lef"] == 2
+    assert pdk["inventory"]["cell_lef"] == 1
+    assert pdk["readiness"]["openroad_inputs"] is True
+    assert set(pdk["conversion"]["stack_variants"]) == {"1P5M_1TM_9K", "1P5M_1TM_11K"}
+
+    ambiguous = client.post(f"/api/v1/pdks/{pdk['id']}/convert", json={})
+    assert ambiguous.status_code == 422
+    converted = client.post(
+        f"/api/v1/pdks/{pdk['id']}/convert", json={"stack_variant": "1P5M_1TM_11K"}
+    )
+    assert converted.status_code == 200
+    result = converted.json()
+    assert result["conversion"]["status"] == "generated_with_blockers"
+    assert result["conversion"]["selected_stack"] == "1P5M_1TM_11K"
+    assert result["conversion"]["normalized_views"]["tech_lef"] == 1
+    assert "cell_layout_missing" in result["conversion"]["blockers"]
+    assert result["readiness"]["physical"] is False
+    assert "generated-adapter" not in json.dumps(result)
+
+    record = tmp_path / "pdks" / pdk["id"] / "content" / "generated-adapter"
+    assert (record / "opensemilab-pdk.json").is_file()
+    assert len(list(record.rglob("*.lef"))) == 2
+
+    supplement = io.BytesIO()
+    with zipfile.ZipFile(supplement, "w") as bundle:
+        bundle.writestr("layout/cells.gds", "private-layout-placeholder")
+        bundle.writestr("klayout/process.lyt", "<technology/>")
+    extended = client.post(
+        f"/api/v1/pdks/{pdk['id']}/files",
+        data={"license_acknowledged": "true"},
+        files=[("files", ("physical-views.zip", supplement.getvalue(), "application/zip"))],
+    )
+    assert extended.status_code == 200
+    assert extended.json()["conversion"]["status"] == "not_started"
+    assert extended.json()["inventory"]["layout"] == 1
+    completed = client.post(
+        f"/api/v1/pdks/{pdk['id']}/convert", json={"stack_variant": "1P5M_1TM_11K"}
+    )
+    assert completed.status_code == 200
+    assert completed.json()["readiness"]["physical"] is False
+    assert "platform_config_validation_required" in completed.json()["conversion"]["blockers"]
+    assert completed.json()["readiness"]["drc"] is False
 
 
 def test_blank_project_returns_an_organized_optional_flow():
