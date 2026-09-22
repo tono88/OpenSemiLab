@@ -6,6 +6,10 @@ This service intentionally exposes named workflows rather than a shell.
 from __future__ import annotations
 
 import gzip
+import csv
+import hashlib
+import heapq
+import io
 import json
 import math
 import os
@@ -18,6 +22,7 @@ import threading
 import time
 import traceback
 import uuid
+import zipfile
 from collections import deque
 from base64 import b64encode
 from base64 import b64decode
@@ -39,6 +44,7 @@ SAFE_PATH_COMPONENT = re.compile(r"^[A-Za-z0-9_.-]+$")
 MAX_ARTIFACT_BYTES = 20_000_000
 MAX_ARTIFACT_BUNDLE_BYTES = 40_000_000
 MAX_COMPRESSED_ARTIFACT_SOURCE_BYTES = 250_000_000
+MAX_SIGNOFF_BUNDLE_BYTES = 80_000_000
 MAX_WAVEFORM_BYTES = 5_000_000
 JOBS: dict[str, dict[str, Any]] = {}
 JOBS_LOCK = threading.Lock()
@@ -549,12 +555,18 @@ def physical_artifacts(job_dir: Path) -> list[dict[str, Any]]:
     total = 0
     seen_names: set[str] = set()
     omitted: list[dict[str, Any]] = []
+    seen_content: set[str] = set()
     for path in candidates:
         size = path.stat().st_size
         relative = path.relative_to(job_dir).as_posix()
         if relative in seen_names:
             continue
         seen_names.add(relative)
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        if digest in seen_content:
+            omitted.append({"name": relative, "size_bytes": size, "reason": "duplicate_content"})
+            continue
+        seen_content.add(digest)
         if size <= MAX_ARTIFACT_BYTES and total + size <= MAX_ARTIFACT_BUNDLE_BYTES:
             artifacts.append(_artifact_payload(path, relative))
             total += size
@@ -575,6 +587,75 @@ def physical_artifacts(job_dir: Path) -> list[dict[str, Any]]:
     return artifacts
 
 
+def _signoff_category(path: Path) -> str:
+    lower = path.name.lower()
+    suffix = path.suffix.lower()
+    if suffix in {".gds", ".def", ".lef", ".oas", ".oasis"}:
+        return "layout"
+    if suffix in {".v", ".sv"}:
+        return "netlists"
+    if suffix in {".sdc", ".sdf", ".spef", ".lib"}:
+        return "timing"
+    if suffix in {".rpt", ".log", ".csv"} or any(token in lower for token in ("drc", "lvs", "antenna", "metrics", "summary")):
+        return "reports"
+    if suffix in {".json", ".yaml", ".yml", ".tcl"}:
+        return "configuration"
+    return "other"
+
+
+def signoff_bundle(
+    job_dir: Path,
+    config_content: str,
+    sdc_content: str,
+    summary_content: str,
+    diagnostics_content: str,
+    execution_log: str,
+) -> dict[str, Any] | None:
+    """Create one compressed, categorized handoff without the JSON artifact limits."""
+    allowed = {".gds", ".def", ".lef", ".oas", ".oasis", ".v", ".sv", ".sdc", ".sdf", ".spef", ".lib", ".rpt", ".log", ".csv", ".json", ".yaml", ".yml", ".tcl"}
+    candidates = sorted(
+        (path for root in (job_dir / "final", job_dir / "runs") if root.exists() for path in root.rglob("*") if path.is_file() and path.suffix.lower() in allowed),
+        key=lambda path: (0 if "final" in path.parts else 1, len(path.parts), str(path)),
+    )
+    output = io.BytesIO()
+    seen_content: set[str] = set()
+    used_names: set[str] = set()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
+        generated = {
+            "configuration/physical-config.json": config_content,
+            "timing/constraints.sdc": sdc_content,
+            "reports/physical-summary.json": summary_content,
+            "reports/execution-diagnostics.json": diagnostics_content,
+            "logs/execution.log": execution_log,
+        }
+        for name, content in generated.items():
+            archive.writestr(name, content)
+            used_names.add(name)
+        for path in candidates:
+            raw = path.read_bytes()
+            digest = hashlib.sha256(raw).hexdigest()
+            if digest in seen_content:
+                continue
+            seen_content.add(digest)
+            relative = path.relative_to(job_dir).as_posix()
+            trimmed = relative.removeprefix("final/")
+            destination = f"{_signoff_category(path)}/{trimmed}"
+            if destination in used_names:
+                destination = f"{_signoff_category(path)}/{relative}"
+            used_names.add(destination)
+            archive.writestr(destination, raw)
+    raw_zip = output.getvalue()
+    if len(raw_zip) > MAX_SIGNOFF_BUNDLE_BYTES:
+        return None
+    return {
+        "name": "signoff-package.zip",
+        "media_type": "application/zip",
+        "encoding": "base64",
+        "content": b64encode(raw_zip).decode("ascii"),
+        "size_bytes": len(raw_zip),
+    }
+
+
 def compact_def_layout(job_dir: Path) -> dict[str, Any] | None:
     """Extract a bounded browser layout without embedding a potentially huge DEF."""
     candidates = sorted(
@@ -588,6 +669,8 @@ def compact_def_layout(job_dir: Path) -> dict[str, Any] | None:
     die: tuple[int, int, int, int] | None = None
     components: list[dict[str, Any]] = []
     component_count = 0
+    placed_component_count = 0
+    component_sample: list[tuple[int, str, dict[str, Any]]] = []
     section = ""
     entry = ""
     layers: dict[str, list[dict[str, Any]]] = {}
@@ -597,16 +680,26 @@ def compact_def_layout(job_dir: Path) -> dict[str, Any] | None:
     total_segments = 0
 
     def consume_component(value: str) -> None:
-        nonlocal component_count
+        nonlocal component_count, placed_component_count
         count_match = re.search(r"^\s*COMPONENTS\s+(\d+)\s*;", value, re.IGNORECASE)
         if count_match:
             component_count = int(count_match.group(1))
-        if len(components) >= 6000 or die is None:
+        if die is None:
             return
-        match = re.search(r"-\s+(\S+)\s+\S+[\s\S]*?\+\s+(?:PLACED|FIXED)\s*\(\s*(-?\d+)\s+(-?\d+)\s*\)", value, re.IGNORECASE)
+        match = re.search(r"-\s+(\S+)\s+(\S+)[\s\S]*?\+\s+(?:PLACED|FIXED)\s*\(\s*(-?\d+)\s+(-?\d+)\s*\)", value, re.IGNORECASE)
         if match:
+            master = match.group(2).lower()
+            if re.search(r"(?:^|_)(?:fill|filler)(?:_|$)", master):
+                return
+            placed_component_count += 1
             x0, y0, _, _ = die
-            components.append({"name": match.group(1), "x": (int(match.group(2)) - x0) / units, "y": (int(match.group(3)) - y0) / units})
+            component = {"name": match.group(1), "x": (int(match.group(3)) - x0) / units, "y": (int(match.group(4)) - y0) / units}
+            score = int.from_bytes(hashlib.blake2b(match.group(1).encode(), digest_size=8).digest(), "big")
+            item = (-score, match.group(1), component)
+            if len(component_sample) < 6000:
+                heapq.heappush(component_sample, item)
+            elif score < -component_sample[0][0]:
+                heapq.heapreplace(component_sample, item)
 
     with path.open("r", encoding="utf-8", errors="replace") as stream:
         for line in stream:
@@ -665,13 +758,16 @@ def compact_def_layout(job_dir: Path) -> dict[str, Any] | None:
                 current_layer, previous = None, None
     if die is None:
         return None
+    components = [item[2] for item in sorted(component_sample, key=lambda item: (-item[0], item[1]))]
     colors = ["#58d6ff", "#ffcb6b", "#ff7597", "#b89cff", "#72e7a9", "#ff995e", "#71a7ff", "#e2ef65", "#ef7dff", "#60e3db"]
     x0, y0, x1, y1 = die
     layer_items = [{"name": name, "color": colors[index % len(colors)], "segments": layers[name], "lengthUm": lengths[name]} for index, name in enumerate(sorted(layers))]
     return {
         "schema": "opensemilab.def-layout/v1", "source": path.relative_to(job_dir).as_posix(),
         "width": (x1 - x0) / units, "height": (y1 - y0) / units,
-        "component_count": component_count or len(components), "components": components, "layers": layer_items,
+        "component_count": placed_component_count or component_count or len(components),
+        "def_component_count": component_count or placed_component_count or len(components),
+        "sampled_component_count": len(components), "components": components, "layers": layer_items,
     }
 
 
@@ -792,11 +888,26 @@ def parse_xyce_outputs(job_dir: Path) -> dict[str, Any]:
 
 
 def physical_summary(job_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
+    metric_values: dict[str, float] = {}
+    metric_files = sorted(job_dir.rglob("metrics.csv"), key=lambda path: (0 if "final" in path.parts else 1, len(path.parts), str(path)))
+    if metric_files:
+        with metric_files[0].open("r", encoding="utf-8", errors="replace", newline="") as stream:
+            for row in csv.reader(stream):
+                if len(row) < 2 or row[0].strip().lower() == "metric":
+                    continue
+                value = parse_numeric(row[1].strip())
+                if value is not None:
+                    metric_values[row[0].strip()] = value
+
+    def metric_value(*names: str) -> float | None:
+        return next((metric_values[name] for name in names if name in metric_values), None)
+
+    die_area = float(config["DIE_AREA"][2]) * float(config["DIE_AREA"][3])
     summary: dict[str, Any] = {
         "schema": "opensemilab.physical-summary/v1",
         "pdk": config["PDK"],
         "scl": config["STD_CELL_LIBRARY"],
-        "die_area_um2": float(config["DIE_AREA"][2]) * float(config["DIE_AREA"][3]),
+        "die_area_um2": die_area,
         "target_utilization_pct": float(config["FP_CORE_UTIL"]),
         "clock_period_ns": float(config.get("CLOCK_PERIOD", 10.0)),
         "cell_count": None,
@@ -806,6 +917,27 @@ def physical_summary(job_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
         "estimated_critical_path_ns": None,
         "estimated_max_frequency_mhz": None,
         "recommended_period_ns": None,
+        "core_area_um2": metric_value("design__core__area"),
+        "stdcell_area_um2": metric_value("design__instance__area__stdcell"),
+        "actual_utilization_pct": None,
+        "setup_worst_slack_ns": metric_value("timing__setup__ws"),
+        "hold_worst_slack_ns": metric_value("timing__hold__ws"),
+        "max_slew_violations": metric_value("design__max_slew_violation__count"),
+        "max_cap_violations": metric_value("design__max_cap_violation__count"),
+        "lvs_errors": metric_value("design__lvs_error__count"),
+        "antenna_violations": metric_value("route__antenna_violation__count"),
+        "power_grid_violations": metric_value("design__power_grid_violation__count"),
+        "disconnected_pins": metric_value("design__disconnected_pin__count"),
+        "critical_disconnected_pins": metric_value("design__critical_disconnected_pin__count"),
+        "recommended_die_width_um": None,
+        "recommended_die_height_um": None,
+        "missing_handoff_artifacts": [],
+        "signoff_blockers": [],
+        "signoff_warnings": [],
+        "signoff_status": "review",
+        "production_ready": False,
+        "handoff_level": "hardened_block",
+        "constraint_scope": "clock_only",
     }
     text_files = [path for root in (job_dir / "final", job_dir / "runs") if root.exists() for path in root.rglob("*") if path.is_file() and path.suffix.lower() in {".def", ".rpt", ".log", ".csv", ".json"}]
     patterns = {
@@ -840,13 +972,63 @@ def physical_summary(job_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
                         break
     if summary["drc_violations"] is None and drc_passed:
         summary["drc_violations"] = 0
-    if summary["wns_ns"] is not None:
-        critical_path = summary["clock_period_ns"] - summary["wns_ns"]
+    utilization = metric_value("design__instance__utilization__stdcell", "design__instance__utilization")
+    if utilization is not None:
+        summary["actual_utilization_pct"] = utilization * 100 if utilization <= 1 else utilization
+    elif summary["stdcell_area_um2"] is not None and summary["core_area_um2"]:
+        summary["actual_utilization_pct"] = summary["stdcell_area_um2"] / summary["core_area_um2"] * 100
+    timing_slack = summary["setup_worst_slack_ns"] if summary["setup_worst_slack_ns"] is not None else summary["wns_ns"]
+    if timing_slack is not None:
+        critical_path = summary["clock_period_ns"] - timing_slack
         if critical_path > 0:
             summary["estimated_critical_path_ns"] = critical_path
             summary["estimated_max_frequency_mhz"] = 1000.0 / critical_path
-            if summary["wns_ns"] < 0:
+            if timing_slack < 0:
                 summary["recommended_period_ns"] = math.ceil(critical_path * 1.05 * 2) / 2
+
+    if summary["stdcell_area_um2"] and summary["target_utilization_pct"]:
+        core_ratio = (summary["core_area_um2"] or die_area) / die_area if die_area else 1.0
+        core_ratio = min(1.0, max(0.5, core_ratio))
+        desired_die_area = summary["stdcell_area_um2"] / (summary["target_utilization_pct"] / 100) / core_ratio * 1.20
+        aspect = float(config["DIE_AREA"][2]) / max(1.0, float(config["DIE_AREA"][3]))
+        recommended_width = math.sqrt(desired_die_area * aspect)
+        recommended_height = math.sqrt(desired_die_area / aspect)
+        summary["recommended_die_width_um"] = math.ceil(recommended_width / 50) * 50
+        summary["recommended_die_height_um"] = math.ceil(recommended_height / 50) * 50
+
+    available = [path for root in (job_dir / "final", job_dir / "runs") if root.exists() for path in root.rglob("*") if path.is_file()]
+    requirements = {
+        "GDSII": lambda path: path.suffix.lower() == ".gds",
+        "DEF": lambda path: path.suffix.lower() == ".def",
+        "LEF": lambda path: path.suffix.lower() == ".lef",
+        "post-PnR netlist": lambda path: path.suffix.lower() in {".v", ".sv"} and ("pnl" in path.name.lower() or "nl" in path.name.lower()),
+        "SDC": lambda path: path.suffix.lower() == ".sdc",
+        "SDF": lambda path: path.suffix.lower() == ".sdf",
+        "SPEF": lambda path: path.suffix.lower() == ".spef",
+    }
+    summary["missing_handoff_artifacts"] = [name for name, predicate in requirements.items() if not any(predicate(path) for path in available)]
+    blockers: list[str] = []
+    for key, label in (
+        ("drc_violations", "DRC"), ("lvs_errors", "LVS"), ("antenna_violations", "antenna"),
+        ("power_grid_violations", "power grid"), ("max_slew_violations", "maximum slew"),
+        ("max_cap_violations", "maximum capacitance"), ("critical_disconnected_pins", "critical disconnected pins"),
+    ):
+        value = summary.get(key)
+        if value is not None and value > 0:
+            blockers.append(f"{label}: {int(value)}")
+    if summary["wns_ns"] is not None and summary["wns_ns"] < 0:
+        blockers.append(f"setup timing WNS: {summary['wns_ns']:.3f} ns")
+    if summary["tns_ns"] is not None and summary["tns_ns"] < 0:
+        blockers.append(f"setup timing TNS: {summary['tns_ns']:.3f} ns")
+    warnings: list[str] = []
+    if summary["disconnected_pins"]:
+        warnings.append(f"disconnected pins: {int(summary['disconnected_pins'])}")
+    if summary["missing_handoff_artifacts"]:
+        warnings.append("missing handoff artifacts: " + ", ".join(summary["missing_handoff_artifacts"]))
+    warnings.append("generated SDC constrains the clock only; project-specific I/O delays and loads require review")
+    summary["signoff_blockers"] = blockers
+    summary["signoff_warnings"] = warnings
+    summary["signoff_status"] = "fail" if blockers else "review" if warnings else "pass"
     return summary
 
 
@@ -1189,7 +1371,19 @@ def execute(
                 "log": log_diagnostics,
             }
             summary_content = json.dumps(summary, indent=2) + "\n"
-            artifacts.insert(0, text_artifact("execution-diagnostics.json", json.dumps(diagnostic_payload, indent=2) + "\n", "application/json"))
+            diagnostics_content = json.dumps(diagnostic_payload, indent=2) + "\n"
+            try:
+                bundle = signoff_bundle(
+                    job_dir, json.dumps(config, indent=2) + "\n", sdc_content,
+                    summary_content, diagnostics_content, result["output"],
+                )
+                if bundle:
+                    artifacts.insert(0, bundle)
+                else:
+                    diagnostics.append({"phase": "signoff_bundle", "error": f"compressed package exceeded {MAX_SIGNOFF_BUNDLE_BYTES} bytes"})
+            except Exception as error:
+                diagnostics.append({"phase": "signoff_bundle", "error": f"{type(error).__name__}: {error}"})
+            artifacts.insert(0, text_artifact("execution-diagnostics.json", diagnostics_content, "application/json"))
             artifacts.insert(0, text_artifact("execution.log", result["output"]))
             artifacts.insert(0, text_artifact("physical-summary.json", summary_content, "application/json"))
             artifacts.insert(0, text_artifact("constraints.sdc", sdc_content, "text/x-sdc"))

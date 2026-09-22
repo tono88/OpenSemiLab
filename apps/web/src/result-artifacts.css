@@ -60,6 +60,8 @@
 .artifact-heading span { color: #45e6a6; font: 8px DM Mono; letter-spacing: .12em; }
 .artifact-heading b { margin-top: 6px; color: #dff8ee; font: 11px DM Mono; }
 .artifact-heading small { color: #527064; font: 8px DM Mono; }
+.artifact-heading-actions { display: flex; align-items: center; gap: 12px; }
+.artifact-heading-actions button { border: 1px solid #45e6a660; background: #123126; color: #dff8ee; padding: 8px 10px; font: 8px DM Mono; cursor: pointer; }
 
 .artifact-filters {
   display: flex;
