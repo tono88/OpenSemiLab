@@ -5,12 +5,21 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 class PhysicalOptions(BaseModel):
     pdk: Literal["sky130A", "gf180mcuD"]
+    floorplan_mode: Literal["auto", "manual"] = "auto"
     clock_port: str = Field("clk", pattern=r"^[A-Za-z_][A-Za-z0-9_$]*$")
     clock_period_ns: float = Field(25.0, ge=0.1, le=1000)
     die_width_um: float = Field(120.0, ge=30, le=5000)
     die_height_um: float = Field(120.0, ge=30, le=5000)
     core_utilization_pct: float = Field(40.0, ge=5, le=80)
     timing_effort: Literal["balanced", "aggressive"] = "balanced"
+    sdc_content: str | None = Field(None, max_length=100_000)
+
+    @field_validator("sdc_content")
+    @classmethod
+    def safe_sdc(cls, value: str | None) -> str | None:
+        if value and any(token in value.lower() for token in ("[exec", "source ", "open ", "socket ", "package require", "file delete", "file rename")):
+            raise ValueError("SDC contains commands that are not allowed in the isolated flow")
+        return value
 
 
 class EdaRunRequest(BaseModel):

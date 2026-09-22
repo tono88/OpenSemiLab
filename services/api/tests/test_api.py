@@ -107,6 +107,22 @@ def test_physical_job_requires_bounded_options():
     })
     assert unsupported.status_code == 422
 
+    automatic = EdaRunRequest.model_validate({
+        "action": "physical", "top": "top", "sources": {"rtl/top.sv": "module top; endmodule"},
+        "physical": {"pdk": "sky130A", "clock_port": "clk", "floorplan_mode": "auto"},
+    })
+    assert automatic.physical.floorplan_mode == "auto"
+    assert EdaRunRequest.model_validate({
+        "action": "physical", "top": "top", "sources": {"rtl/top.sv": "module top; endmodule"},
+        "physical": {"pdk": "sky130A", "sdc_content": "create_clock -period 25 [get_ports clk]\n"},
+    }).physical.sdc_content.startswith("create_clock")
+
+    unsafe_sdc = client.post("/api/v1/eda/jobs", json={
+        "action": "physical", "top": "top", "sources": {"rtl/top.sv": "module top; endmodule"},
+        "physical": {"pdk": "sky130A", "sdc_content": "[exec id]"},
+    })
+    assert unsafe_sdc.status_code == 422
+
 
 def test_physical_job_cancel_is_forwarded_to_worker():
     forwarded = httpx.Response(202, json={"job_id": "abc123", "status": "cancelling"})
