@@ -6,6 +6,7 @@ export interface Artifact {
   content:string
   encoding?:'utf-8'|'base64'
   size_bytes?:number
+  original_size_bytes?:number
 }
 
 export interface SimulationPlot {
@@ -26,10 +27,14 @@ export interface PhysicalSummary {
   scl:string
   die_area_um2:number
   target_utilization_pct:number
+  clock_period_ns?:number
   cell_count:number|null
   wns_ns:number|null
   tns_ns:number|null
   drc_violations:number|null
+  estimated_critical_path_ns?:number|null
+  estimated_max_frequency_mhz?:number|null
+  recommended_period_ns?:number|null
 }
 
 export interface RunResult {
