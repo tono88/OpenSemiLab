@@ -14,6 +14,24 @@ SPEC.loader.exec_module(worker)
 
 
 class WorkerResultTests(unittest.TestCase):
+    def test_streaming_command_has_no_total_limit_and_reports_liveness(self):
+        updates = []
+        with tempfile.TemporaryDirectory() as temporary:
+            result = worker.run_streaming_command(
+                ["python3", "-u", "-c", "import time; print('stage one'); time.sleep(1.1); print('stage two')"],
+                Path(temporary),
+                timeout_seconds=0,
+                idle_timeout_seconds=10,
+                progress_callback=updates.append,
+            )
+
+        self.assertEqual(result["exit_code"], 0)
+        self.assertFalse(result["timed_out"])
+        self.assertIn("stage one", result["output"])
+        self.assertIn("stage two", result["output"])
+        self.assertTrue(any(update["process_alive"] for update in updates))
+        self.assertTrue(any("stage one" in update["live_output"] for update in updates))
+
     def test_run_command_decodes_partial_byte_output_on_timeout(self):
         timeout = worker.subprocess.TimeoutExpired(
             cmd=["librelane"],
