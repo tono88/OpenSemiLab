@@ -1,8 +1,11 @@
 import importlib.util
+import base64
+import io
 import tempfile
 import threading
 import time
 import unittest
+import zipfile
 from base64 import b64encode
 from pathlib import Path
 from unittest.mock import patch
@@ -183,6 +186,59 @@ Index   v-sweep   v(a)       v(y)
 
         self.assertTrue(any(item["name"] == "final/top.def.gz" for item in artifacts))
         self.assertTrue(any(item["name"] == "artifact-manifest.json" for item in artifacts))
+
+    def test_signoff_bundle_is_compressed_and_grouped(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            job = Path(temporary)
+            final = job / "final"
+            final.mkdir()
+            (final / "top.gds").write_bytes(b"gds" * 100)
+            (final / "top.pnl.v").write_text("module top; endmodule\n", encoding="utf-8")
+            (final / "top.spef").write_text("*SPEF test\n", encoding="utf-8")
+            bundle = worker.signoff_bundle(job, "{}\n", "create_clock\n", "{}\n", "{}\n", "completed\n")
+
+        self.assertIsNotNone(bundle)
+        raw = base64.b64decode(bundle["content"])
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            names = set(archive.namelist())
+        self.assertIn("layout/top.gds", names)
+        self.assertIn("netlists/top.pnl.v", names)
+        self.assertIn("timing/top.spef", names)
+        self.assertIn("logs/execution.log", names)
+
+    def test_physical_summary_reports_real_utilization_and_signoff_blockers(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            job = Path(temporary)
+            final = job / "final"
+            final.mkdir()
+            (final / "design.def").write_text("COMPONENTS 27595 ;\nEND COMPONENTS\n", encoding="utf-8")
+            (final / "metrics.csv").write_text(
+                "Metric,Value\n"
+                "design__core__area,1399930\n"
+                "design__instance__area__stdcell,110859\n"
+                "design__instance__utilization__stdcell,0.0791887\n"
+                "timing__setup__wns,0\n"
+                "timing__setup__tns,0\n"
+                "timing__setup__ws,1.37323\n"
+                "timing__hold__ws,0.15483\n"
+                "route__drc_errors,0\n"
+                "design__max_slew_violation__count,1072\n"
+                "design__max_cap_violation__count,132\n"
+                "design__lvs_error__count,0\n"
+                "route__antenna_violation__count,0\n"
+                "design__power_grid_violation__count,0\n",
+                encoding="utf-8",
+            )
+            summary = worker.physical_summary(job, {
+                "PDK": "sky130A", "STD_CELL_LIBRARY": "sky130_fd_sc_hd",
+                "DIE_AREA": [0, 0, 1200, 1200], "FP_CORE_UTIL": 35, "CLOCK_PERIOD": 25,
+            })
+
+        self.assertAlmostEqual(summary["actual_utilization_pct"], 7.91887)
+        self.assertEqual(summary["recommended_die_width_um"], 650)
+        self.assertAlmostEqual(summary["estimated_critical_path_ns"], 23.62677)
+        self.assertEqual(summary["signoff_status"], "fail")
+        self.assertIn("maximum slew: 1072", summary["signoff_blockers"])
 
     def test_physical_summary_ignores_lone_exponent_marker_and_reads_scientific_notation(self):
         with tempfile.TemporaryDirectory() as temporary:

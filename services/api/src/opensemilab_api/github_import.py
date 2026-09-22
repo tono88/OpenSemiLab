@@ -108,8 +108,8 @@ def build_project(owner: str, repository: str, branch: str, members: list[tarfil
     is_picorv32 = top.lower().startswith("picorv32") or any("picorv32" in item["content"].lower() for item in hdl)
     physical = {
         "clock_port": "clk", "clock_period_ns": 25,
-        "die_width_um": 1200 if is_picorv32 else 120,
-        "die_height_um": 1200 if is_picorv32 else 120,
+        "die_width_um": 650 if is_picorv32 else 120,
+        "die_height_um": 650 if is_picorv32 else 120,
         "core_utilization_pct": 35 if is_picorv32 else 40,
         "timing_effort": "balanced",
     }

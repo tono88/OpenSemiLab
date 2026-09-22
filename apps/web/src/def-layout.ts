@@ -1,7 +1,7 @@
 export interface DefComponent { name:string; x:number; y:number }
 export interface DefRouteSegment { layer:string; x1:number; y1:number; x2:number; y2:number }
 export interface DefLayer { name:string; color:string; segments:DefRouteSegment[]; lengthUm:number }
-export interface DefLayout { width:number; height:number; components:DefComponent[]; layers:DefLayer[] }
+export interface DefLayout { width:number; height:number; component_count?:number; def_component_count?:number; sampled_component_count?:number; components:DefComponent[]; layers:DefLayer[] }
 
 const LAYER_COLORS=['#58d6ff','#ffcb6b','#ff7597','#b89cff','#72e7a9','#ff995e','#71a7ff','#e2ef65','#ef7dff','#60e3db']
 
