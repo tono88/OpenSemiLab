@@ -17,7 +17,9 @@ This registry is intended for a self-hosted installation protected by the instit
 
 The scanner recognizes Liberty, LEF, Verilog, SPICE/CDL, GDS/OASIS, parasitic data, layer maps, and open DRC/LVS/OpenRCX inputs. Commercial-tool files may be inventoried, but they are never treated as automatically portable.
 
-The **Prepare open adapter** action copies recognized views into an isolated, generated OpenPDKs/LibreLane layout and writes a local LibreLane configuration. If multiple technology LEFs match the process (for example, different metal or top-metal variants), conversion stops until the operator selects the exact stack. Generated adapters and reports stay inside the private Docker volume.
+The **Prepare open adapter** action runs an internal, atomic server-side compilation. It copies recognized open-compatible views into an isolated OpenPDKs/LibreLane layout, analyzes LEF metadata, writes a draft platform configuration, produces a requirement report and SHA-256 inventory, and stores a downloadable adapter ZIP in the private Docker volume. The ZIP excludes the originally uploaded packages. If multiple technology LEFs match the process (for example, different metal or top-metal variants), compilation stops until the operator selects the exact stack.
+
+Adding supplementary views preserves that stack choice and automatically recompiles the adapter. The API exposes only the compilation identifier, aggregate analysis, hashes, readiness gates, and bundle size; private source paths and file names remain server-local.
 
 Readiness is deliberately staged:
 
@@ -30,6 +32,8 @@ Readiness is deliberately staged:
 | DRC/LVS/PEX | separate open, validated rule decks for each check |
 
 The converter does not claim that Synopsys binary or sign-off formats are losslessly translatable. Compiled `.db` files need an authorized Liberty source/export; Milkyway libraries need an authorized GDS/LEF export; TLUPlus and proprietary DRC/LVS/PEX decks require a separately licensed, calibrated open-tool port. A generated GDS is not equivalent to foundry sign-off.
+
+Each compiled bundle contains `opensemilab-pdk.json`, the generated OpenPDKs tree, `conversion-report.json`, `REQUIRED_INPUTS.json`, `README.md`, and `SHA256SUMS`. Treat the result as a locally derived engineering artifact under the same NDA and license as its inputs.
 
 Physical execution is enabled only for an OpenPDKs-shaped installation containing the required physical views:
 

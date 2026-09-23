@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import shutil
@@ -17,6 +18,7 @@ from fastapi import UploadFile
 
 PROFILE_SCHEMA = "opensemilab.pdk-profile/v1"
 REGISTRY_SCHEMA = "opensemilab.private-pdk/v1"
+COMPILATION_SCHEMA = "opensemilab.pdk-compilation/v1"
 SAFE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")
 MAX_FILES = int(os.getenv("OPENSEMILAB_PDK_MAX_FILES", "50000"))
 MAX_UPLOAD_BYTES = int(os.getenv("OPENSEMILAB_PDK_MAX_UPLOAD_BYTES", str(2 * 1024**3)))
@@ -122,7 +124,9 @@ def _category(path: Path) -> str | None:
         return "cell_lef"
     if suffix in {".v", ".sv"}:
         return "verilog"
-    if suffix in {".spice", ".cir", ".ckt", ".cdl", ".spi"} or "hspice" in name or "spectre" in name:
+    if suffix in {".cdl", ".spi"}:
+        return "cell_netlist"
+    if suffix in {".spice", ".cir", ".ckt"} or "hspice" in name or "spectre" in name:
         return "device_models"
     if suffix in {".gds", ".gdsii", ".oas", ".oasis"}:
         return "layout"
@@ -142,7 +146,9 @@ def _category(path: Path) -> str | None:
         return "layer_properties"
     if suffix in {".pdf", ".md", ".txt"} or name.startswith("readme"):
         return "documentation"
-    if "tluplus" in name or suffix == ".tf" or "milkyway" in str(path).lower():
+    if "tluplus" in name or suffix == ".tf" or "milkyway" in str(path).lower() or (
+        suffix == ".tcl" and "antenna" in name
+    ):
         return "commercial_technology"
     return None
 
@@ -253,13 +259,17 @@ def _conversion_state(content: Path, inventory: dict[str, int], stack: str) -> d
         ("liberty", "liberty_missing"),
         ("verilog", "verilog_models_missing"),
         ("layout", "cell_layout_missing"),
-        ("klayout_tech", "streamout_map_missing"),
         ("drc", "open_drc_deck_missing"),
         ("lvs", "open_lvs_deck_missing"),
+        ("cell_netlist", "cell_lvs_netlist_missing"),
         ("openrcx", "open_rcx_rules_missing"),
     ):
         if not inventory.get(category):
             blockers.append(code)
+    if not inventory.get("klayout_tech"):
+        blockers.append(
+            "klayout_tech_validation_required" if inventory.get("streamout_map") else "streamout_map_missing"
+        )
     consistency = _view_consistency(content)
     if not consistency["consistent"]:
         blockers.append("cell_views_inconsistent")
@@ -289,7 +299,7 @@ def _scan(content: Path) -> tuple[dict[str, int], dict[str, bool], dict | None, 
         "openroad_inputs": all(inventory.get(item, 0) > 0 for item in ("tech_lef", "cell_lef", "liberty", "verilog")),
         "physical": adapter is not None and all(inventory.get(item, 0) > 0 for item in ("tech_lef", "cell_lef", "liberty", "layout", "klayout_tech")),
         "drc": inventory.get("drc", 0) > 0,
-        "lvs": inventory.get("lvs", 0) > 0,
+        "lvs": inventory.get("lvs", 0) > 0 and inventory.get("cell_netlist", 0) > 0,
         "pex": inventory.get("openrcx", 0) > 0,
     }
     if inventory.get("compiled_db", 0):
@@ -309,6 +319,12 @@ def _public(manifest: dict) -> dict:
         "generated_at": None, "blockers": [],
     })
     return result
+
+
+def _write_manifest(record: Path, manifest: dict) -> None:
+    temporary = record / "manifest.json.tmp"
+    temporary.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(record / "manifest.json")
 
 
 async def import_private_pdk(
@@ -392,6 +408,7 @@ async def extend_private_pdk(identifier: str, uploads: list[UploadFile], license
     uploaded = [0]
     expanded = [int(manifest.get("size_bytes", 0))]
     files = [int(manifest.get("file_count", 0))]
+    selected_stack = manifest.get("conversion", {}).get("selected_stack")
     try:
         for index, upload in enumerate(uploads):
             filename = Path(upload.filename or f"package-{index}").name
@@ -409,6 +426,7 @@ async def extend_private_pdk(identifier: str, uploads: list[UploadFile], license
         staged_content.rename(destination)
         shutil.rmtree(incoming, ignore_errors=True)
         shutil.rmtree(record / "content" / "generated-adapter", ignore_errors=True)
+        shutil.rmtree(record / "compiled", ignore_errors=True)
         inventory, readiness, adapter, warnings = _scan(record / "content")
         manifest.update({
             "archive_count": int(manifest.get("archive_count", 0)) + len(uploads),
@@ -416,9 +434,18 @@ async def extend_private_pdk(identifier: str, uploads: list[UploadFile], license
             "readiness": readiness, "adapter": adapter, "warnings": warnings,
             "conversion": _conversion_state(record / "content", inventory, manifest.get("stack", "")),
         })
-        temporary = record / "manifest.json.tmp"
-        temporary.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-        temporary.replace(record / "manifest.json")
+        _write_manifest(record, manifest)
+        if selected_stack:
+            try:
+                return convert_private_pdk(identifier, selected_stack)
+            except Exception:
+                manifest["conversion"]["status"] = "compilation_failed"
+                manifest["conversion"]["selected_stack"] = selected_stack
+                manifest["warnings"].append(
+                    "Supplementary views were stored, but internal recompilation failed; retry regeneration"
+                )
+                _write_manifest(record, manifest)
+                return _public(manifest)
         return _public(manifest)
     except Exception:
         shutil.rmtree(incoming, ignore_errors=True)
@@ -483,7 +510,7 @@ def _record(identifier: str) -> tuple[Path, dict]:
 def _copy_views(content: Path, destination: Path, selected_stack: str | None) -> dict[str, int]:
     folder_by_category = {
         "tech_lef": "techlef", "cell_lef": "lef", "liberty": "lib", "verilog": "verilog",
-        "layout": "gds", "device_models": "spice", "drc": "drc", "lvs": "lvs",
+        "layout": "gds", "device_models": "spice", "cell_netlist": "cdl", "drc": "drc", "lvs": "lvs",
         "openrcx": "openrcx", "klayout_tech": "klayout", "streamout_map": "klayout",
         "layer_properties": "klayout",
     }
@@ -512,6 +539,145 @@ def _copy_views(content: Path, destination: Path, selected_stack: str | None) ->
     return copied
 
 
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        while chunk := source.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _platform_analysis(library: Path) -> dict:
+    routing_layers: list[str] = []
+    sites: set[str] = set()
+    power_pins: set[str] = set()
+    ground_pins: set[str] = set()
+    for path in sorted((library / "techlef").glob("*")):
+        if not path.is_file() or path.stat().st_size > 64 * 1024 * 1024:
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        current_layer: str | None = None
+        for line in text.splitlines():
+            layer_match = re.match(r"\s*LAYER\s+([A-Za-z_][A-Za-z0-9_$]*)", line, re.IGNORECASE)
+            if layer_match:
+                current_layer = layer_match.group(1)
+            elif current_layer and re.match(r"\s*TYPE\s+ROUTING\s*;", line, re.IGNORECASE):
+                routing_layers.append(current_layer)
+            elif current_layer and re.match(rf"\s*END\s+{re.escape(current_layer)}\b", line, re.IGNORECASE):
+                current_layer = None
+        sites.update(re.findall(r"(?m)^\s*SITE\s+([A-Za-z_][A-Za-z0-9_$]*)", text))
+    for path in sorted((library / "lef").glob("*")):
+        if not path.is_file() or path.stat().st_size > 64 * 1024 * 1024:
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        sites.update(re.findall(r"(?m)^\s*SITE\s+([A-Za-z_][A-Za-z0-9_$]*)\s*;", text))
+        current_pin: str | None = None
+        for line in text.splitlines():
+            pin_match = re.match(r"\s*PIN\s+([A-Za-z_][A-Za-z0-9_$]*)", line, re.IGNORECASE)
+            if pin_match:
+                current_pin = pin_match.group(1)
+                continue
+            use_match = re.match(r"\s*USE\s+(POWER|GROUND)\s*;", line, re.IGNORECASE)
+            if current_pin and use_match:
+                (power_pins if use_match.group(1).upper() == "POWER" else ground_pins).add(current_pin)
+            if current_pin and re.match(rf"\s*END\s+{re.escape(current_pin)}\b", line, re.IGNORECASE):
+                current_pin = None
+    unique_layers = list(dict.fromkeys(routing_layers))
+    return {
+        "routing_layers": unique_layers,
+        "sites": sorted(sites),
+        "power_pins": sorted(power_pins),
+        "ground_pins": sorted(ground_pins),
+    }
+
+
+def _write_generated_config(pdk_dir: Path, library: Path, scl: str, analysis: dict, copied: dict[str, int]) -> None:
+    config_dir = pdk_dir / "libs.tech" / "librelane" / scl
+    config_dir.mkdir(parents=True, exist_ok=True)
+    base = "$::env(PDK_ROOT)/$::env(PDK)/libs.ref/$::env(STD_CELL_LIBRARY)"
+    config = [
+        "# Generated locally by OpenSemiLab BYOPDK.",
+        "# Draft configuration: production use requires completion of every TODO and validation.",
+        f"set ::env(TECH_LEFS) [dict create nom_* [glob {base}/techlef/*]]",
+        f"set ::env(CELL_LEFS) [glob {base}/lef/*]",
+        f"set ::env(LIB) [dict create nom_* [glob {base}/lib/*]]",
+        f"set ::env(CELL_VERILOG_MODELS) [glob {base}/verilog/*]",
+    ]
+    if copied.get("layout"):
+        config.append(f"set ::env(CELL_GDS) [glob {base}/gds/*]")
+    if copied.get("klayout_tech"):
+        config.append(f"set ::env(KLAYOUT_TECH) [lindex [glob {base}/klayout/*.lyt] 0]")
+    if len(analysis["sites"]) == 1:
+        config.append(f"set ::env(PLACE_SITE) {analysis['sites'][0]}")
+    else:
+        config.append("# TODO: set ::env(PLACE_SITE) <validated placement site>")
+    if analysis["routing_layers"]:
+        config.extend((
+            f"set ::env(RT_MIN_LAYER) {analysis['routing_layers'][0]}",
+            f"set ::env(RT_MAX_LAYER) {analysis['routing_layers'][-1]}",
+        ))
+    else:
+        config.append("# TODO: set validated routing layer limits")
+    if len(analysis["power_pins"]) == 1 and len(analysis["ground_pins"]) == 1:
+        config.extend((
+            f"set ::env(VDD_PIN) {analysis['power_pins'][0]}",
+            f"set ::env(GND_PIN) {analysis['ground_pins'][0]}",
+        ))
+    else:
+        config.append("# TODO: set validated VDD_PIN and GND_PIN")
+    config.extend((
+        "# TODO: set validated tie-high, tie-low and minimum-drive buffer cells.",
+        "# TODO: set tracks, tap/endcap/filler cells and PDN geometry.",
+    ))
+    (config_dir / "config.tcl").write_text("\n".join(config) + "\n", encoding="utf-8")
+    (pdk_dir / "libs.tech" / "librelane" / "config.tcl").write_text(
+        "# OpenSemiLab generated private PDK entry point.\n", encoding="utf-8"
+    )
+
+
+def _required_inputs(blockers: list[str], inventory: dict[str, int], selected: str | None) -> dict:
+    guidance = {
+        "cell_layout_missing": {"accept": [".gds", ".gdsii", ".oas", ".oasis"], "purpose": "standard-cell layout export"},
+        "streamout_map_missing": {"accept": [".lyt"], "purpose": "validated KLayout technology/stream-out configuration"},
+        "klayout_tech_validation_required": {"accept": [".lyt"], "purpose": "validate the uploaded vendor layer map as a KLayout technology"},
+        "open_drc_deck_missing": {"accept": [".lydrc", ".drc"], "purpose": "validated open DRC deck"},
+        "open_lvs_deck_missing": {"accept": [".lylvs", ".lvs"], "purpose": "validated open LVS deck and cell CDL/SPICE"},
+        "cell_lvs_netlist_missing": {"accept": [".cdl", ".spi"], "purpose": "standard-cell schematic netlist for LVS"},
+        "open_rcx_rules_missing": {"accept": ["OpenRCX rules"], "purpose": "calibrated RC extraction rules"},
+        "platform_config_validation_required": {"accept": ["reviewed config.tcl"], "purpose": "site, power pins, routing, tracks, cells and PDN validation"},
+    }
+    return {
+        "schema": COMPILATION_SCHEMA,
+        "selected_stack": selected,
+        "pending": [{"code": code, **guidance.get(code, {"accept": [], "purpose": "resolve validation requirement"})} for code in blockers],
+        "commercial_references_detected": inventory.get("commercial_technology", 0),
+        "notice": "Commercial decks and binary databases are reference inputs only; they are not treated as validated open-tool rules.",
+    }
+
+
+def _write_bundle(record: Path, adapter: Path, compile_id: str) -> tuple[Path, int, str]:
+    compiled = record / "compiled"
+    compiled.mkdir(parents=True, exist_ok=True)
+    target = compiled / "opensemilab-pdk-adapter.zip"
+    temporary = compiled / f".{compile_id}.zip"
+    with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as bundle:
+        for path in sorted(adapter.rglob("*")):
+            if path.is_file():
+                bundle.write(path, Path("opensemilab-pdk-adapter") / path.relative_to(adapter))
+    temporary.replace(target)
+    return target, target.stat().st_size, _sha256(target)
+
+
+def compiled_bundle(identifier: str) -> Path:
+    record, manifest = _record(identifier)
+    if not manifest.get("conversion", {}).get("bundle_available"):
+        raise FileNotFoundError(identifier)
+    bundle = record / "compiled" / "opensemilab-pdk-adapter.zip"
+    if not bundle.is_file():
+        raise FileNotFoundError(identifier)
+    return bundle
+
+
 def convert_private_pdk(identifier: str, stack_variant: str | None = None) -> dict:
     record, manifest = _record(identifier)
     content = record / "content"
@@ -537,27 +703,13 @@ def convert_private_pdk(identifier: str, stack_variant: str | None = None) -> di
     scl = f"{pdk_name}_sc"
     adapter_parent = content / "generated-adapter"
     temporary = Path(tempfile.mkdtemp(prefix=".adapter-", dir=record))
+    compile_id = uuid.uuid4().hex
     try:
         pdk_dir = temporary / pdk_name
         library = pdk_dir / "libs.ref" / scl
         copied = _copy_views(content, library, selected)
-        config_dir = pdk_dir / "libs.tech" / "librelane" / scl
-        config_dir.mkdir(parents=True, exist_ok=True)
-        config = [
-            "# Generated locally by OpenSemiLab BYOPDK. Review before production use.",
-            "set ::env(TECH_LEFS) [dict create nom_* [glob $::env(PDK_ROOT)/$::env(PDK)/libs.ref/$::env(STD_CELL_LIBRARY)/techlef/*]]",
-            "set ::env(CELL_LEFS) [glob $::env(PDK_ROOT)/$::env(PDK)/libs.ref/$::env(STD_CELL_LIBRARY)/lef/*]",
-            "set ::env(LIB) [dict create nom_* [glob $::env(PDK_ROOT)/$::env(PDK)/libs.ref/$::env(STD_CELL_LIBRARY)/lib/*]]",
-            "set ::env(CELL_VERILOG_MODELS) [glob $::env(PDK_ROOT)/$::env(PDK)/libs.ref/$::env(STD_CELL_LIBRARY)/verilog/*]",
-        ]
-        if copied.get("layout"):
-            config.append("set ::env(CELL_GDS) [glob $::env(PDK_ROOT)/$::env(PDK)/libs.ref/$::env(STD_CELL_LIBRARY)/gds/*]")
-        if copied.get("klayout_tech"):
-            config.append("set ::env(KLAYOUT_TECH) [lindex [glob $::env(PDK_ROOT)/$::env(PDK)/libs.ref/$::env(STD_CELL_LIBRARY)/klayout/*.lyt] 0]")
-        (config_dir / "config.tcl").write_text("\n".join(config) + "\n", encoding="utf-8")
-        (pdk_dir / "libs.tech" / "librelane" / "config.tcl").write_text(
-            "# OpenSemiLab generated private PDK entry point.\n", encoding="utf-8"
-        )
+        analysis = _platform_analysis(library)
+        _write_generated_config(pdk_dir, library, scl, analysis, copied)
         (temporary / "opensemilab-pdk.json").write_text(json.dumps({
             "schema": PROFILE_SCHEMA, "pdk_root": ".", "pdk": pdk_name, "scl": scl,
         }, indent=2) + "\n", encoding="utf-8")
@@ -566,15 +718,45 @@ def convert_private_pdk(identifier: str, stack_variant: str | None = None) -> di
         conversion = {
             **state, "status": status, "selected_stack": selected,
             "generated_at": datetime.now(UTC).isoformat(), "blockers": blockers,
-            "normalized_views": copied,
+            "normalized_views": copied, "compile_id": compile_id,
+            "platform_analysis": {
+                "routing_layer_count": len(analysis["routing_layers"]),
+                "site_count": len(analysis["sites"]),
+                "power_pin_count": len(analysis["power_pins"]),
+                "ground_pin_count": len(analysis["ground_pins"]),
+            },
         }
         (temporary / "conversion-report.json").write_text(json.dumps(conversion, indent=2) + "\n", encoding="utf-8")
+        (temporary / "REQUIRED_INPUTS.json").write_text(
+            json.dumps(_required_inputs(blockers, inventory, selected), indent=2) + "\n", encoding="utf-8"
+        )
+        (temporary / "README.md").write_text(
+            "# OpenSemiLab private PDK adapter\n\n"
+            "Generated and stored locally. This archive excludes the original uploaded packages.\n\n"
+            "Review `conversion-report.json`, `REQUIRED_INPUTS.json`, and every TODO in the generated "
+            "LibreLane configuration before physical use. A generated adapter is not foundry sign-off.\n",
+            encoding="utf-8",
+        )
+        checksums = []
+        for path in sorted(temporary.rglob("*")):
+            if path.is_file() and path.name != "SHA256SUMS":
+                checksums.append(f"{_sha256(path)}  {path.relative_to(temporary).as_posix()}")
+        (temporary / "SHA256SUMS").write_text("\n".join(checksums) + "\n", encoding="utf-8")
         if adapter_parent.exists():
             shutil.rmtree(adapter_parent)
         temporary.rename(adapter_parent)
     except Exception:
         shutil.rmtree(temporary, ignore_errors=True)
         raise
+
+    bundle, bundle_size, bundle_sha256 = _write_bundle(record, adapter_parent, compile_id)
+    adapter_manifest_sha256 = _sha256(adapter_parent / "SHA256SUMS")
+    conversion.update({
+        "bundle_available": True,
+        "bundle_size_bytes": bundle_size,
+        "bundle_sha256": bundle_sha256,
+        "manifest_sha256": adapter_manifest_sha256,
+    })
 
     adapter = {"pdk_root": "generated-adapter", "pdk": pdk_name, "scl": scl}
     manifest["adapter"] = adapter
@@ -586,10 +768,8 @@ def convert_private_pdk(identifier: str, stack_variant: str | None = None) -> di
         "openroad_inputs": all(inventory.get(item, 0) > 0 for item in ("tech_lef", "cell_lef", "liberty", "verilog")),
         "physical": not any(code in conversion["blockers"] for code in ("technology_lef_missing", "cell_lef_missing", "liberty_missing", "verilog_models_missing", "cell_layout_missing", "streamout_map_missing", "cell_views_inconsistent", "platform_config_validation_required")),
         "drc": inventory.get("drc", 0) > 0,
-        "lvs": inventory.get("lvs", 0) > 0,
+        "lvs": inventory.get("lvs", 0) > 0 and inventory.get("cell_netlist", 0) > 0,
         "pex": inventory.get("openrcx", 0) > 0,
     }
-    temp_manifest = record / "manifest.json.tmp"
-    temp_manifest.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    temp_manifest.replace(record / "manifest.json")
+    _write_manifest(record, manifest)
     return _public(manifest)

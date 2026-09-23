@@ -3,6 +3,7 @@ import os
 import httpx
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from opensemilab_api import __version__
 from opensemilab_api.design import DesignPlan, DesignRequest, DesignTemplate, TEMPLATES, make_plan
@@ -10,7 +11,7 @@ from opensemilab_api.eda import EdaRunRequest
 from opensemilab_api.engines import ENGINES
 from opensemilab_api.github_import import import_public_github_repository
 from opensemilab_api.models import EngineCapability, Experiment, SimulationResult
-from opensemilab_api.pdk_registry import convert_private_pdk, delete_private_pdk, extend_private_pdk, import_private_pdk, list_private_pdks
+from opensemilab_api.pdk_registry import compiled_bundle, convert_private_pdk, delete_private_pdk, extend_private_pdk, import_private_pdk, list_private_pdks
 from pydantic import BaseModel, Field
 
 app = FastAPI(
@@ -118,6 +119,21 @@ async def add_pdk_files(
         raise HTTPException(status_code=422, detail=str(error)) from error
     except FileNotFoundError as error:
         raise HTTPException(status_code=404, detail="Private PDK was not found") from error
+
+
+@app.get("/api/v1/pdks/{pdk_id}/bundle", response_class=FileResponse)
+def download_pdk_bundle(pdk_id: str) -> FileResponse:
+    try:
+        bundle = compiled_bundle(pdk_id)
+        return FileResponse(
+            bundle,
+            media_type="application/zip",
+            filename="opensemilab-pdk-adapter.zip",
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Compiled PDK adapter was not found") from error
 
 
 @app.get("/api/v1/eda/capabilities")

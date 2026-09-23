@@ -192,6 +192,8 @@ def test_private_pdk_conversion_requires_exact_stack_and_stays_honest(tmp_path, 
     assert result["conversion"]["status"] == "generated_with_blockers"
     assert result["conversion"]["selected_stack"] == "1P5M_1TM_11K"
     assert result["conversion"]["normalized_views"]["tech_lef"] == 1
+    assert result["conversion"]["bundle_available"] is True
+    assert len(result["conversion"]["bundle_sha256"]) == 64
     assert "cell_layout_missing" in result["conversion"]["blockers"]
     assert result["readiness"]["physical"] is False
     assert "generated-adapter" not in json.dumps(result)
@@ -199,6 +201,15 @@ def test_private_pdk_conversion_requires_exact_stack_and_stays_honest(tmp_path, 
     record = tmp_path / "pdks" / pdk["id"] / "content" / "generated-adapter"
     assert (record / "opensemilab-pdk.json").is_file()
     assert len(list(record.rglob("*.lef"))) == 2
+    bundle_response = client.get(f"/api/v1/pdks/{pdk['id']}/bundle")
+    assert bundle_response.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(bundle_response.content)) as compiled:
+        names = set(compiled.namelist())
+        assert "opensemilab-pdk-adapter/SHA256SUMS" in names
+        assert "opensemilab-pdk-adapter/REQUIRED_INPUTS.json" in names
+        assert not any("package-" in name or "supplement-" in name for name in names)
+        checksums = compiled.read("opensemilab-pdk-adapter/SHA256SUMS").decode()
+        assert "conversion-report.json" in checksums
 
     supplement = io.BytesIO()
     with zipfile.ZipFile(supplement, "w") as bundle:
@@ -210,15 +221,13 @@ def test_private_pdk_conversion_requires_exact_stack_and_stays_honest(tmp_path, 
         files=[("files", ("physical-views.zip", supplement.getvalue(), "application/zip"))],
     )
     assert extended.status_code == 200
-    assert extended.json()["conversion"]["status"] == "not_started"
+    assert extended.json()["conversion"]["status"] == "generated_with_blockers"
+    assert extended.json()["conversion"]["selected_stack"] == "1P5M_1TM_11K"
+    assert extended.json()["conversion"]["bundle_available"] is True
     assert extended.json()["inventory"]["layout"] == 1
-    completed = client.post(
-        f"/api/v1/pdks/{pdk['id']}/convert", json={"stack_variant": "1P5M_1TM_11K"}
-    )
-    assert completed.status_code == 200
-    assert completed.json()["readiness"]["physical"] is False
-    assert "platform_config_validation_required" in completed.json()["conversion"]["blockers"]
-    assert completed.json()["readiness"]["drc"] is False
+    assert extended.json()["readiness"]["physical"] is False
+    assert "platform_config_validation_required" in extended.json()["conversion"]["blockers"]
+    assert extended.json()["readiness"]["drc"] is False
 
 
 def test_blank_project_returns_an_organized_optional_flow():
