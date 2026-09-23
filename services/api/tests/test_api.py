@@ -1,4 +1,5 @@
 import io
+import gzip
 import json
 import tarfile
 import zipfile
@@ -167,6 +168,20 @@ def test_private_pdk_conversion_requires_exact_stack_and_stays_honest(tmp_path, 
         bundle.writestr("lef/cells.lef", "VERSION 5.8 ;\nMACRO INV\n SITE core ;\nEND INV\nEND LIBRARY")
         bundle.writestr("lib/cells.lib", "library(test) { cell(INV) {} }")
         bundle.writestr("verilog/cells.v", "module INV(input A, output Y); assign Y=~A; endmodule")
+        bundle.writestr(
+            "commercial/1p5m_1tm_11k/stream.map",
+            "D 10:0 10 0 ; METAL1\nD 11:0 11 0 ; VIA1\n",
+        )
+        bundle.writestr(
+            "commercial/1p5m_1tm_11k/lvs.cal",
+            "LAYER MAP 10 DATATYPE 0 10\nLAYER METAL1 10\n"
+            "LAYER MAP 11 DATATYPE 0 11\nLAYER VIA1 11\nCONNECT METAL1 VIA1\n",
+        )
+        bundle.writestr(
+            "commercial/1p5m_1tm_11k/typical.tluplus",
+            gzip.compress(b"CONDUCTOR METAL1 { THICKNESS=0.5 RPSQ=0.1 }\n#### end_ascii_header\n\x00"),
+        )
+        bundle.writestr("commercial/1p5m_1tm_11k/corner.rules.R", b"#DECRYPT\nsynthetic")
     imported = client.post(
         "/api/v1/pdks/import",
         data={
@@ -194,6 +209,10 @@ def test_private_pdk_conversion_requires_exact_stack_and_stays_honest(tmp_path, 
     assert result["conversion"]["normalized_views"]["tech_lef"] == 1
     assert result["conversion"]["bundle_available"] is True
     assert len(result["conversion"]["bundle_sha256"]) == 64
+    assert result["conversion"]["translation"]["status"] == "draft_requires_validation"
+    assert result["conversion"]["translation"]["layer_count"] == 2
+    assert result["conversion"]["translation"]["rc_corner_count"] == 1
+    assert result["conversion"]["translation"]["encrypted_file_count"] == 1
     assert "cell_layout_missing" in result["conversion"]["blockers"]
     assert result["readiness"]["physical"] is False
     assert "generated-adapter" not in json.dumps(result)
@@ -207,6 +226,8 @@ def test_private_pdk_conversion_requires_exact_stack_and_stays_honest(tmp_path, 
         names = set(compiled.namelist())
         assert "opensemilab-pdk-adapter/SHA256SUMS" in names
         assert "opensemilab-pdk-adapter/REQUIRED_INPUTS.json" in names
+        assert "opensemilab-pdk-adapter/translations/klayout/technology.lyt" in names
+        assert "opensemilab-pdk-adapter/translations/openrcx/CALIBRATION_REQUIRED.md" in names
         assert not any("package-" in name or "supplement-" in name for name in names)
         checksums = compiled.read("opensemilab-pdk-adapter/SHA256SUMS").decode()
         assert "conversion-report.json" in checksums

@@ -15,6 +15,8 @@ from typing import BinaryIO
 
 from fastapi import UploadFile
 
+from .pdk_translate import translate_commercial_references
+
 
 PROFILE_SCHEMA = "opensemilab.pdk-profile/v1"
 REGISTRY_SCHEMA = "opensemilab.private-pdk/v1"
@@ -144,9 +146,17 @@ def _category(path: Path) -> str | None:
         return "streamout_map"
     if suffix == ".lyp":
         return "layer_properties"
+    if suffix == ".cal":
+        return "commercial_lvs_calibre"
+    if suffix == ".pvs":
+        return "commercial_lvs_pvs"
+    if suffix in {".r", ".c"} and ".rules." in name:
+        return "commercial_rc_encrypted"
+    if "tluplus" in name:
+        return "commercial_rc_tluplus"
     if suffix in {".pdf", ".md", ".txt"} or name.startswith("readme"):
         return "documentation"
-    if "tluplus" in name or suffix == ".tf" or "milkyway" in str(path).lower() or (
+    if suffix == ".tf" or "milkyway" in str(path).lower() or (
         suffix == ".tcl" and "antenna" in name
     ):
         return "commercial_technology"
@@ -304,7 +314,10 @@ def _scan(content: Path) -> tuple[dict[str, int], dict[str, bool], dict | None, 
     }
     if inventory.get("compiled_db", 0):
         warnings.append("Compiled .db timing libraries are vendor-specific; provide Liberty .lib for open tools")
-    if inventory.get("commercial_technology", 0):
+    if any(inventory.get(key, 0) for key in (
+        "commercial_technology", "commercial_lvs_calibre", "commercial_lvs_pvs",
+        "commercial_rc_encrypted", "commercial_rc_tluplus",
+    )):
         warnings.append("Commercial-tool technology files were detected and will not be executed or treated as open-tool adapters")
     return inventory, readiness, adapter, warnings
 
@@ -650,7 +663,10 @@ def _required_inputs(blockers: list[str], inventory: dict[str, int], selected: s
         "schema": COMPILATION_SCHEMA,
         "selected_stack": selected,
         "pending": [{"code": code, **guidance.get(code, {"accept": [], "purpose": "resolve validation requirement"})} for code in blockers],
-        "commercial_references_detected": inventory.get("commercial_technology", 0),
+        "commercial_references_detected": sum(inventory.get(key, 0) for key in (
+            "commercial_technology", "commercial_lvs_calibre", "commercial_lvs_pvs",
+            "commercial_rc_encrypted", "commercial_rc_tluplus",
+        )),
         "notice": "Commercial decks and binary databases are reference inputs only; they are not treated as validated open-tool rules.",
     }
 
@@ -710,6 +726,7 @@ def convert_private_pdk(identifier: str, stack_variant: str | None = None) -> di
         copied = _copy_views(content, library, selected)
         analysis = _platform_analysis(library)
         _write_generated_config(pdk_dir, library, scl, analysis, copied)
+        translation = translate_commercial_references(content, temporary / "translations", selected)
         (temporary / "opensemilab-pdk.json").write_text(json.dumps({
             "schema": PROFILE_SCHEMA, "pdk_root": ".", "pdk": pdk_name, "scl": scl,
         }, indent=2) + "\n", encoding="utf-8")
@@ -719,6 +736,7 @@ def convert_private_pdk(identifier: str, stack_variant: str | None = None) -> di
             **state, "status": status, "selected_stack": selected,
             "generated_at": datetime.now(UTC).isoformat(), "blockers": blockers,
             "normalized_views": copied, "compile_id": compile_id,
+            "translation": translation,
             "platform_analysis": {
                 "routing_layer_count": len(analysis["routing_layers"]),
                 "site_count": len(analysis["sites"]),
@@ -733,6 +751,8 @@ def convert_private_pdk(identifier: str, stack_variant: str | None = None) -> di
         (temporary / "README.md").write_text(
             "# OpenSemiLab private PDK adapter\n\n"
             "Generated and stored locally. This archive excludes the original uploaded packages.\n\n"
+            "`translations/` contains auditable commercial-to-open drafts and an intermediate rule model. "
+            "They do not replace foundry sign-off or licensed export of M31 GDS/CDL.\n\n"
             "Review `conversion-report.json`, `REQUIRED_INPUTS.json`, and every TODO in the generated "
             "LibreLane configuration before physical use. A generated adapter is not foundry sign-off.\n",
             encoding="utf-8",
