@@ -6,6 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from opensemilab_api import __version__
+from opensemilab_api.auth import router as auth_router
+from opensemilab_api.db import init_db
 from opensemilab_api.design import DesignPlan, DesignRequest, DesignTemplate, TEMPLATES, make_plan
 from opensemilab_api.eda import EdaRunRequest
 from opensemilab_api.engines import ENGINES
@@ -25,8 +27,17 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in origins],
     allow_methods=["GET", "POST", "DELETE"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Content-Type", "Authorization"],
 )
+app.include_router(auth_router)
+
+
+@app.on_event("startup")
+def _startup() -> None:
+    try:
+        init_db()
+    except Exception:  # pragma: no cover - DB puede no estar lista en CI sin compose
+        pass
 
 
 class GithubImportRequest(BaseModel):

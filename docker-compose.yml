@@ -1,4 +1,20 @@
 services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: opensemilab
+      POSTGRES_USER: opensemilab
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-opensemilab-dev}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opensemilab -d opensemilab"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
   api:
     build: ./services/api
     ports:
@@ -7,9 +23,14 @@ services:
       OPENSEMILAB_CORS_ORIGINS: http://localhost:5173
       OPENSEMILAB_EDA_WORKER_URL: http://eda-worker:9000
       OPENSEMILAB_PDK_ROOT: /var/lib/opensemilab-pdks
+      DATABASE_URL: postgresql+psycopg://opensemilab:${POSTGRES_PASSWORD:-opensemilab-dev}@db:5432/opensemilab
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      JWT_EXPIRE_MIN: "720"
     volumes:
       - opensemilab-pdks:/var/lib/opensemilab-pdks
     depends_on:
+      db:
+        condition: service_healthy
       eda-worker:
         condition: service_healthy
   web:
@@ -54,5 +75,6 @@ services:
     cpus: 4.0
 
 volumes:
+  pgdata:
   opensemilab-jobs:
   opensemilab-pdks:
