@@ -15,7 +15,7 @@ import secrets
 from datetime import datetime, timedelta
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
@@ -26,6 +26,20 @@ from opensemilab_api.models_db import PasswordReset, User
 log = logging.getLogger("opensemilab.auth")
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 _bearer = HTTPBearer(auto_error=False)
+
+# Freno simple anti fuerza-bruta: 8 intentos / 5 min por IP.
+_ATTEMPTS: dict[str, list[datetime]] = {}
+_ATTEMPT_LIMIT = 8
+_ATTEMPT_WINDOW = timedelta(minutes=5)
+
+
+def _throttle(key: str) -> None:
+    now = datetime.utcnow()
+    hits = [t for t in _ATTEMPTS.get(key, []) if now - t < _ATTEMPT_WINDOW]
+    if len(hits) >= _ATTEMPT_LIMIT:
+        raise HTTPException(status_code=429, detail="Demasiados intentos, espera unos minutos")
+    hits.append(now)
+    _ATTEMPTS[key] = hits
 
 
 def _hash_pw(password: str) -> str:
@@ -44,6 +58,9 @@ def _verify_pw(password: str, stored: str) -> bool:
 
 JWT_SECRET = os.getenv("JWT_SECRET", "dev-only-change-me")
 JWT_EXPIRE_MIN = int(os.getenv("JWT_EXPIRE_MIN", "720"))
+
+if JWT_SECRET == "dev-only-change-me":
+    log.warning("JWT_SECRET es el valor de dev — define uno real en el LAB")
 
 
 # --- dominio permitido -------------------------------------------------------
@@ -113,7 +130,8 @@ class ResetIn(BaseModel):
 
 # --- endpoints ---------------------------------------------------------------
 @router.post("/register", status_code=201)
-def register(body: RegisterIn, db: Session = Depends(get_db)) -> dict:
+def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)) -> dict:
+    _throttle(f"reg:{request.client.host if request.client else '?'}")
     init_db()
     email = body.email.strip().lower()
     if not is_allowed_email(email):
@@ -132,7 +150,8 @@ def register(body: RegisterIn, db: Session = Depends(get_db)) -> dict:
 
 
 @router.post("/login")
-def login(body: LoginIn, db: Session = Depends(get_db)) -> dict:
+def login(body: LoginIn, request: Request, db: Session = Depends(get_db)) -> dict:
+    _throttle(f"login:{request.client.host if request.client else '?'}")
     init_db()
     email = body.email.strip().lower()
     user = db.query(User).filter_by(email=email).first()

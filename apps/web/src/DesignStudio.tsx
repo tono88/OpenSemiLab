@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { apiFetch } from './auth'
 import ProjectWorkspace from './ProjectWorkspace'
 import PdkManager, { type PrivatePdk } from './PdkManager'
 import { createProject, loadProjects, normalizeProjectExecution, saveProjects, type StoredProject } from './projectStore'
@@ -61,13 +62,13 @@ export default function DesignStudio({ locale }: { locale: 'es' | 'en' }) {
     detailEn:selectedPrivatePdk.readiness.physical?'LibreLane can use the read-only mounted private adapter. DRC/LVS/PEX retain independent validation states.':'The PDK is associated with the project, but RTL→GDSII remains disabled until a valid LibreLane/OpenPDKs profile is installed.',
   }:undefined)
 
-  useEffect(() => { fetch('/api/v1/design/templates').then(r => r.ok ? r.json() : FALLBACK).then(setTemplates).catch(() => setTemplates(FALLBACK)) }, [])
+  useEffect(() => { apiFetch('/api/v1/design/templates').then(r => r.ok ? r.json() : FALLBACK).then(setTemplates).catch(() => setTemplates(FALLBACK)) }, [])
   useEffect(() => { if (selected) setPdk(selected.recommended_pdk) }, [selected])
 
   async function buildPlan() {
     setError('')
     try {
-      const response = await fetch('/api/v1/design/plan', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ name, kind, pdk, level, language }) })
+      const response = await apiFetch('/api/v1/design/plan', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ name, kind, pdk, level, language }) })
       if (!response.ok) throw new Error(es?'No se pudo crear el flujo de diseño.':'Could not create the design plan.')
       setPlan(await response.json())
       const project=createProject({name,kind,pdk,level,language})
@@ -108,7 +109,7 @@ export default function DesignStudio({ locale }: { locale: 'es' | 'en' }) {
   async function importGithub() {
     setError('');setImportingGithub(true)
     try {
-      const response=await fetch('/api/v1/design/import-github',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:githubUrl.trim()})})
+      const response=await apiFetch('/api/v1/design/import-github',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:githubUrl.trim()})})
       const imported=await response.json()
       if(!response.ok)throw new Error(imported.detail??(es?'No se pudo importar el repositorio.':'Could not import the repository.'))
       acceptImportedProject(imported as StoredProject)

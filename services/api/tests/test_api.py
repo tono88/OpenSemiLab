@@ -11,8 +11,28 @@ from fastapi.testclient import TestClient
 from opensemilab_api.github_import import import_public_github_repository, parse_github_repository
 from opensemilab_api.main import app
 from opensemilab_api.eda import EdaRunRequest
+from opensemilab_api.auth import _hash_pw, _issue_token
+from opensemilab_api.db import SessionLocal, init_db
+from opensemilab_api.models_db import User
 
 client = TestClient(app)
+
+
+def _seed_qa_user() -> None:
+    init_db()
+    db = SessionLocal()
+    email = "qa@unis.edu.gt"
+    user = db.query(User).filter_by(email=email).first()
+    if user is None:
+        user = User(email=email, name="QA", password_hash=_hash_pw("QaPrueba1234"))
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+    client.headers.update({"Authorization": f"Bearer {_issue_token(user)}"})
+    db.close()
+
+
+_seed_qa_user()
 
 
 def test_health():

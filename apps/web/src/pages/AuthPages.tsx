@@ -25,6 +25,7 @@ export function Login() {
       <label>EMAIL UNIS<input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="usuario@unis.edu.gt" /></label>
       <label>{es ? 'CONTRASEÑA' : 'PASSWORD'}<input type="password" required value={password} onChange={e => setPassword(e.target.value)} /></label>
       {error && <p className="error">{error}</p>}
+      {error.includes('inválidos') && <p className="auth-alt">¿Primera vez por aquí? <a href="#/registro">Crea tu cuenta @unis.edu.gt</a>.</p>}
       <button className="btn-primary block" disabled={busy}>{busy ? '…' : (es ? 'Entrar' : 'Sign in')}</button>
     </form>
     <p className="auth-alt"><a href="#/recuperar">{es ? 'Olvidé mi contraseña' : 'Forgot password'}</a> · <a href="#/registro">{es ? 'Crear cuenta' : 'Create account'}</a></p>

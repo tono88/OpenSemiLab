@@ -14,17 +14,24 @@ type AuthState = {
 const Ctx = createContext<AuthState | null>(null)
 const KEY = 'opensemilab.token'
 
-export async function authFetch(path: string, init: RequestInit = {}) {
+export async function apiFetch(path: string, init: RequestInit = {}) {
   const token = localStorage.getItem(KEY)
-  const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(init.headers as Record<string, string> | undefined) }
+  const headers: Record<string, string> = { ...(init.headers as Record<string, string> | undefined) }
   if (token) headers.Authorization = `Bearer ${token}`
+  const isForm = typeof FormData !== 'undefined' && init.body instanceof FormData
+  if (!isForm && init.body !== undefined && !headers['Content-Type'] && !headers['content-type']) headers['Content-Type'] = 'application/json'
   const res = await fetch(path, { ...init, headers })
   if (!res.ok) {
+    if (res.status === 401) { localStorage.removeItem(KEY); if (!location.hash.startsWith('#/login')) location.hash = '#/login' }
     const body = await res.json().catch(() => ({ detail: 'Request failed' }))
     const detail = Array.isArray(body.detail) ? body.detail.map((d: { msg: string }) => d.msg).join(' · ') : body.detail
     throw new Error(detail ?? 'Request failed')
   }
   return res.json()
+}
+
+export async function authFetch(path: string, init: RequestInit = {}) {
+  return apiFetch(path, init)
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {

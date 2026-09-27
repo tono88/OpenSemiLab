@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { apiFetch } from './auth'
 
 const DEFAULT_RTL = `module top (
   input  logic       clk,
@@ -57,7 +58,7 @@ export default function DigitalWorkbench({ locale }: { locale: 'es' | 'en' }) {
 
   async function refresh() {
     setWorker('checking')
-    try { const r=await fetch('/api/v1/eda/capabilities'); if(!r.ok) throw new Error(); const body=await r.json(); setTools(body.tools??{}); setWorker(body.ready?'online':'degraded') }
+    try { const r=await apiFetch('/api/v1/eda/capabilities'); if(!r.ok) throw new Error(); const body=await r.json(); setTools(body.tools??{}); setWorker(body.ready?'online':'degraded') }
     catch { setWorker('offline') }
   }
   useEffect(()=>{void refresh()},[])
@@ -65,7 +66,7 @@ export default function DigitalWorkbench({ locale }: { locale: 'es' | 'en' }) {
   async function run(action:'lint'|'simulate'|'synthesize') {
     setRunning(action); setError(''); setResult(null)
     const body={action,top:action==='simulate'?'tb':'top',sources:action==='simulate'?{'top.sv':rtl,'tb.sv':testbench}:{'top.sv':rtl}}
-    try { const response=await fetch('/api/v1/eda/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); const data=await response.json(); if(!response.ok) throw new Error(data.detail??'EDA execution failed'); setResult(data) }
+    try { const response=await apiFetch('/api/v1/eda/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); const data=await response.json(); if(!response.ok) throw new Error(data.detail??'EDA execution failed'); setResult(data) }
     catch(reason){setError(reason instanceof Error?reason.message:'EDA execution failed')}
     finally{setRunning('')}
   }

@@ -1,13 +1,14 @@
 import os
 
 import httpx
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from opensemilab_api import __version__
-from opensemilab_api.auth import router as auth_router
+from opensemilab_api.auth import get_current_user, router as auth_router
 from opensemilab_api.db import init_db
+from opensemilab_api.models_db import User
 from opensemilab_api.design import DesignPlan, DesignRequest, DesignTemplate, TEMPLATES, make_plan
 from opensemilab_api.eda import EdaRunRequest
 from opensemilab_api.engines import ENGINES
@@ -64,12 +65,12 @@ def list_design_templates() -> list[DesignTemplate]:
 
 
 @app.post("/api/v1/design/plan", response_model=DesignPlan)
-def create_design_plan(project: DesignRequest) -> DesignPlan:
+def create_design_plan(project: DesignRequest, _user: User = Depends(get_current_user)) -> DesignPlan:
     return make_plan(project)
 
 
 @app.post("/api/v1/design/import-github")
-def import_github_project(request: GithubImportRequest) -> dict:
+def import_github_project(request: GithubImportRequest, _user: User = Depends(get_current_user)) -> dict:
     try:
         return import_public_github_repository(request.url)
     except ValueError as error:
@@ -77,7 +78,7 @@ def import_github_project(request: GithubImportRequest) -> dict:
 
 
 @app.get("/api/v1/pdks")
-def list_pdks() -> list[dict]:
+def list_pdks(_user: User = Depends(get_current_user)) -> list[dict]:
     return list_private_pdks()
 
 
@@ -89,6 +90,7 @@ async def import_pdk(
     process: str = Form(...),
     stack: str = Form(...),
     license_acknowledged: bool = Form(False),
+    _user: User = Depends(get_current_user),
 ) -> dict:
     try:
         return await import_private_pdk(
@@ -99,7 +101,7 @@ async def import_pdk(
 
 
 @app.delete("/api/v1/pdks/{pdk_id}", status_code=204)
-def delete_pdk(pdk_id: str) -> None:
+def delete_pdk(pdk_id: str, _user: User = Depends(get_current_user)) -> None:
     try:
         delete_private_pdk(pdk_id)
     except ValueError as error:
@@ -109,7 +111,7 @@ def delete_pdk(pdk_id: str) -> None:
 
 
 @app.post("/api/v1/pdks/{pdk_id}/convert")
-def convert_pdk(pdk_id: str, request: PdkConversionRequest) -> dict:
+def convert_pdk(pdk_id: str, request: PdkConversionRequest, _user: User = Depends(get_current_user)) -> dict:
     try:
         return convert_private_pdk(pdk_id, request.stack_variant)
     except ValueError as error:
@@ -123,6 +125,7 @@ async def add_pdk_files(
     pdk_id: str,
     files: list[UploadFile] = File(...),
     license_acknowledged: bool = Form(False),
+    _user: User = Depends(get_current_user),
 ) -> dict:
     try:
         return await extend_private_pdk(pdk_id, files, license_acknowledged)
@@ -133,7 +136,7 @@ async def add_pdk_files(
 
 
 @app.get("/api/v1/pdks/{pdk_id}/bundle", response_class=FileResponse)
-def download_pdk_bundle(pdk_id: str) -> FileResponse:
+def download_pdk_bundle(pdk_id: str, _user: User = Depends(get_current_user)) -> FileResponse:
     try:
         bundle = compiled_bundle(pdk_id)
         return FileResponse(
@@ -148,7 +151,7 @@ def download_pdk_bundle(pdk_id: str) -> FileResponse:
 
 
 @app.get("/api/v1/eda/capabilities")
-def eda_capabilities() -> dict:
+def eda_capabilities(_user: User = Depends(get_current_user)) -> dict:
     try:
         response = httpx.get(f"{eda_worker_url}/health", timeout=5)
         response.raise_for_status()
@@ -158,7 +161,7 @@ def eda_capabilities() -> dict:
 
 
 @app.post("/api/v1/eda/run")
-def run_eda_action(request: EdaRunRequest) -> dict:
+def run_eda_action(request: EdaRunRequest, _user: User = Depends(get_current_user)) -> dict:
     try:
         response = httpx.post(f"{eda_worker_url}/run", json=request.model_dump(), timeout=100)
         if response.status_code >= 400:
@@ -172,7 +175,7 @@ def run_eda_action(request: EdaRunRequest) -> dict:
 
 
 @app.post("/api/v1/eda/jobs", status_code=202)
-def start_eda_job(request: EdaRunRequest) -> dict:
+def start_eda_job(request: EdaRunRequest, _user: User = Depends(get_current_user)) -> dict:
     if request.action != "physical":
         raise HTTPException(status_code=422, detail="Only physical implementation uses asynchronous jobs")
     try:
@@ -188,7 +191,7 @@ def start_eda_job(request: EdaRunRequest) -> dict:
 
 
 @app.get("/api/v1/eda/jobs/{job_id}")
-def get_eda_job(job_id: str) -> dict:
+def get_eda_job(job_id: str, _user: User = Depends(get_current_user)) -> dict:
     if not job_id.isalnum() or len(job_id) > 32:
         raise HTTPException(status_code=422, detail="Invalid job identifier")
     try:
@@ -204,7 +207,7 @@ def get_eda_job(job_id: str) -> dict:
 
 
 @app.post("/api/v1/eda/jobs/{job_id}/cancel", status_code=202)
-def cancel_eda_job(job_id: str) -> dict:
+def cancel_eda_job(job_id: str, _user: User = Depends(get_current_user)) -> dict:
     if not job_id.isalnum() or len(job_id) > 32:
         raise HTTPException(status_code=422, detail="Invalid job identifier")
     try:
@@ -220,7 +223,7 @@ def cancel_eda_job(job_id: str) -> dict:
 
 
 @app.post("/api/v1/simulations/pn-junction", response_model=SimulationResult)
-def simulate_pn_junction(experiment: Experiment) -> SimulationResult:
+def simulate_pn_junction(experiment: Experiment, _user: User = Depends(get_current_user)) -> SimulationResult:
     engine = ENGINES[experiment.engine.value]
     capability = engine.capability()
     if not capability.available:

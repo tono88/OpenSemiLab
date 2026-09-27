@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { apiFetch } from './auth'
 import './pdk-manager.css'
 
 export interface PrivatePdk {
@@ -51,7 +52,7 @@ export default function PdkManager({locale,onSelect,onProfilesChange}:{locale:'e
 
   async function refresh() {
     try {
-      const response=await fetch('/api/v1/pdks')
+      const response=await apiFetch('/api/v1/pdks')
       if(!response.ok)throw new Error()
       const next=await response.json() as PrivatePdk[]
       setPdks(next);onProfilesChange(next)
@@ -69,7 +70,7 @@ export default function PdkManager({locale,onSelect,onProfilesChange}:{locale:'e
     form.set('display_name',name.trim());form.set('version',version.trim());form.set('process',process.trim());form.set('stack',stack.trim());form.set('license_acknowledged','true')
     files.forEach(file=>form.append('files',file))
     try {
-      const response=await fetch('/api/v1/pdks/import',{method:'POST',body:form})
+      const response=await apiFetch('/api/v1/pdks/import',{method:'POST',body:form})
       const raw=await response.text()
       let body:{detail?:string}={}
       try {body=raw?JSON.parse(raw):{}}
@@ -87,7 +88,7 @@ export default function PdkManager({locale,onSelect,onProfilesChange}:{locale:'e
 
   async function remove(pdk:PrivatePdk) {
     if(!window.confirm(es?`¿Eliminar ${pdk.display_name} ${pdk.version} del almacenamiento privado?`:`Delete ${pdk.display_name} ${pdk.version} from private storage?`))return
-    const response=await fetch(`/api/v1/pdks/${encodeURIComponent(pdk.id)}`,{method:'DELETE'})
+    const response=await apiFetch(`/api/v1/pdks/${encodeURIComponent(pdk.id)}`,{method:'DELETE'})
     if(!response.ok) {setMessage(es?'No se pudo eliminar el PDK.':'Could not delete the PDK.');return}
     setMessage(es?'PDK eliminado del volumen privado.':'PDK deleted from the private volume.')
     await refresh()
@@ -98,7 +99,7 @@ export default function PdkManager({locale,onSelect,onProfilesChange}:{locale:'e
     if(pdk.conversion.stack_variants.length>1&&!selected) {setMessage(es?'Seleccione primero la variante metálica exacta.':'Select the exact metal-stack variant first.');return}
     setConverting(pdk.id);setMessage(es?'Preparando y validando el adaptador local…':'Preparing and validating the local adapter…')
     try {
-      const response=await fetch(`/api/v1/pdks/${encodeURIComponent(pdk.id)}/convert`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stack_variant:selected||null})})
+      const response=await apiFetch(`/api/v1/pdks/${encodeURIComponent(pdk.id)}/convert`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stack_variant:selected||null})})
       const body=await response.json() as {detail?:string}
       if(!response.ok)throw new Error(body.detail??(es?'Falló la conversión.':'Conversion failed.'))
       setMessage(es?'Adaptador generado. Revise los bloqueos antes de ejecutar el flujo físico.':'Adapter generated. Review blockers before running the physical flow.')
@@ -113,7 +114,7 @@ export default function PdkManager({locale,onSelect,onProfilesChange}:{locale:'e
     setConverting(pdk.id);setMessage(es?'Añadiendo y analizando las vistas…':'Adding and scanning views…')
     const form=new FormData();form.set('license_acknowledged','true');additions.forEach(file=>form.append('files',file))
     try {
-      const response=await fetch(`/api/v1/pdks/${encodeURIComponent(pdk.id)}/files`,{method:'POST',body:form})
+      const response=await apiFetch(`/api/v1/pdks/${encodeURIComponent(pdk.id)}/files`,{method:'POST',body:form})
       const body=await response.json() as {detail?:string}
       if(!response.ok)throw new Error(body.detail??(es?'No se pudieron añadir las vistas.':'Could not add the views.'))
       setMessage(es?'Vistas añadidas y adaptador recompilado en el servidor.':'Views added and adapter recompiled on the server.')

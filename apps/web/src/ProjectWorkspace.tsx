@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { apiFetch } from './auth'
 import type { ProjectFile, StoredProject } from './projectStore'
 import type { Artifact, RunResult, RunSnapshot, SimulationData } from './eda-results'
 import SpiceViewer from './SpiceViewer'
@@ -180,7 +181,7 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
   async function refreshCapabilities() {
     setWorker('checking')
     try {
-      const response=await fetch('/api/v1/eda/capabilities')
+      const response=await apiFetch('/api/v1/eda/capabilities')
       if(!response.ok) throw new Error()
       const body=await response.json();setTools(body.tools??{});setIntegrations(body.integrations??[]);setWorker(body.ready?'online':'degraded')
     } catch {setWorker('offline')}
@@ -189,7 +190,7 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
   useEffect(()=>{
     if(!project.pdk.startsWith('private:')) {setPrivatePdk(null);return}
     const identifier=project.pdk.slice('private:'.length)
-    fetch('/api/v1/pdks').then(response=>response.ok?response.json():[]).then((items:PrivatePdkStatus[])=>setPrivatePdk(items.find(item=>item.id===identifier)??null)).catch(()=>setPrivatePdk(null))
+    apiFetch('/api/v1/pdks').then(response=>response.ok?response.json():[]).then((items:PrivatePdkStatus[])=>setPrivatePdk(items.find(item=>item.id===identifier)??null)).catch(()=>setPrivatePdk(null))
   },[project.pdk])
   useEffect(()=>{
     const manifest=readManifest(project)
@@ -266,7 +267,7 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
       if(action==='simulate'&&!testbenches.length) throw new Error(es?'Agregue un archivo con rol testbench antes de simular.':'Add a file with the testbench role before simulation.')
       if(action==='spice'&&!spiceEntry) throw new Error(es?'Este proyecto no contiene un netlist SPICE ejecutable.':'This project does not contain an executable SPICE netlist.')
       const top=action==='simulate'||action==='vhdl'?execution.testbenchTop:execution.rtlTop
-      const response=await fetch('/api/v1/eda/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,top:top??'top',entry:action==='spice'?spiceEntry?.path:undefined,sources})})
+      const response=await apiFetch('/api/v1/eda/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,top:top??'top',entry:action==='spice'?spiceEntry?.path:undefined,sources})})
       const data=await response.json();if(!response.ok) throw new Error(data.detail??'EDA execution failed');acceptResult(data,action)
     } catch(reason) {setError(reason instanceof Error?reason.message:'EDA execution failed')}
     finally {setRunning('')}
@@ -294,7 +295,7 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
       }
       if(!Object.keys(sources).length)throw new Error(es?'Agregue los archivos de entrada requeridos para este adaptador.':'Add the input files required by this adapter.')
       const actionTop=action==='fpga'?fpgaTop:(execution.rtlTop??'top')
-      const response=await fetch('/api/v1/eda/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,top:actionTop,entry,sources,encodings,adapter})})
+      const response=await apiFetch('/api/v1/eda/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,top:actionTop,entry,sources,encodings,adapter})})
       const data=await response.json();if(!response.ok)throw new Error(data.detail??'EDA adapter failed');acceptResult(data,action)
       const currentManifest=readManifest(project)
       if(adapter&&project.files.some(file=>file.path==='project.json'))onChange({...project,updatedAt:new Date().toISOString(),files:project.files.map(file=>file.path==='project.json'?{...file,content:JSON.stringify({...currentManifest,execution:action==='fpga'?{...(currentManifest.execution??{}),fpga_top:fpgaTop}:currentManifest.execution,adapters:{...(currentManifest.adapters??{}),[action]:adapter}},null,2)+'\n'}:file)})
@@ -306,7 +307,7 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
     setActiveStage('physical');setErrorStage('physical');setConsoleOpen(true);setRunning('physical');setPhysicalJobId(jobId);setError('')
     try {
       while(true) {
-        const statusResponse=await fetch(`/api/v1/eda/jobs/${jobId}`)
+        const statusResponse=await apiFetch(`/api/v1/eda/jobs/${jobId}`)
         const job=await statusResponse.json();if(!statusResponse.ok) throw new Error(job.detail??'Could not read physical job')
         if(typeof job.elapsed_seconds==='number')setPhysicalElapsed(job.elapsed_seconds)
         if(typeof job.live_output==='string')setPhysicalLiveOutput(job.live_output)
@@ -331,7 +332,7 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
     if(!physicalJobId)return
     setPhysicalStatus(`${es?'Trabajo':'Job'} ${physicalJobId} · ${es?'cancelando de forma segura…':'cancelling safely…'}`)
     try {
-      const response=await fetch(`/api/v1/eda/jobs/${physicalJobId}/cancel`,{method:'POST'})
+      const response=await apiFetch(`/api/v1/eda/jobs/${physicalJobId}/cancel`,{method:'POST'})
       const body=await response.json();if(!response.ok)throw new Error(body.detail??'Could not cancel physical job')
     } catch(reason) {setError(reason instanceof Error?reason.message:'Could not cancel physical job')}
   }
@@ -343,7 +344,7 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
     const currentManifest=readManifest(project)
     onChange({...project,updatedAt:new Date().toISOString(),files:project.files.map(file=>file.path==='project.json'?{...file,content:JSON.stringify({...currentManifest,physical},null,2)+'\n'}:file)})
     try {
-      const response=await fetch('/api/v1/eda/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      const response=await apiFetch('/api/v1/eda/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
         action:'physical',top:execution.rtlTop??'top',sources,
         physical,
       })})
