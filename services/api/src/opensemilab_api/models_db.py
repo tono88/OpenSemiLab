@@ -29,6 +29,7 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(16), default="user")  # user | admin
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
@@ -59,6 +60,18 @@ class DesignEvent(Base):
 
 class PasswordReset(Base):
     __tablename__ = "password_resets"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uid)
+    user_id: Mapped[str] = mapped_column(String(32), ForeignKey("users.id"), index=True)
+    token_sha: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    used: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class EmailVerification(Base):
+    """Loop de verificación: prueba control del inbox institucional."""
+
+    __tablename__ = "email_verifications"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uid)
     user_id: Mapped[str] = mapped_column(String(32), ForeignKey("users.id"), index=True)

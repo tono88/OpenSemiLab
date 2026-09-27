@@ -5,6 +5,7 @@ import { Landing } from './pages/Landing'
 import { Team } from './pages/Team'
 import { Privacy, Terms } from './pages/Legal'
 import { Forgot, Login, Register } from './pages/AuthPages'
+import { Verify } from './pages/Verify'
 
 function route(): string {
   const h = location.hash.replace(/^#/, '') || '/'
@@ -35,6 +36,7 @@ function Router() {
   if (r === '/login') return <Login />
   if (r === '/registro') return <Register />
   if (r === '/recuperar') return <Forgot />
+  if (r.startsWith('/verificar')) return <Verify />
   return <Gate><App /></Gate>
 }
 

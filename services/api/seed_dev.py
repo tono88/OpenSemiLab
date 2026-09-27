@@ -25,9 +25,10 @@ user = db.query(User).filter_by(email=EMAIL).first()
 if user:
     user.password_hash = _hash_pw(PASSWORD)
     user.is_active = True
+    user.is_verified = True
     print(f"actualizado: {EMAIL}")
 else:
-    db.add(User(email=EMAIL, name="Prueba", password_hash=_hash_pw(PASSWORD)))
+    db.add(User(email=EMAIL, name="Prueba", password_hash=_hash_pw(PASSWORD), is_verified=True))
     print(f"creado: {EMAIL}")
 db.commit()
 print(f"listo — entra con {EMAIL} / {PASSWORD}")

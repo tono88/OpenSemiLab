@@ -13,6 +13,7 @@ export function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [resent, setResent] = useState(false)
   const [busy, setBusy] = useState(false)
   async function submit(e: React.FormEvent) {
     e.preventDefault(); setError(''); setBusy(true)
@@ -20,11 +21,17 @@ export function Login() {
     catch (err) { setError(err instanceof Error ? err.message : 'Login failed') }
     finally { setBusy(false) }
   }
+  async function resend() {
+    setError('')
+    try { await authFetch('/api/v1/auth/resend', { method: 'POST', body: JSON.stringify({ email: email.trim() }) }); setResent(true) }
+    catch (err) { setError(err instanceof Error ? err.message : 'Request failed') }
+  }
   return <PublicShell><Card title={es ? 'Entrar' : 'Sign in'}>
     <form onSubmit={submit}>
       <label>EMAIL UNIS<input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="usuario@unis.edu.gt" /></label>
       <label>{es ? 'CONTRASEÑA' : 'PASSWORD'}<input type="password" required value={password} onChange={e => setPassword(e.target.value)} /></label>
       {error && <p className="error">{error}</p>}
+      {error.includes('Verifica') && <p className="auth-alt"><button className="btn-ghost" type="button" onClick={() => void resend()}>{resent ? (es ? 'Link reenviado, revisa tu inbox' : 'Link resent, check your inbox') : (es ? 'Reenviar link de verificación' : 'Resend verification link')}</button></p>}
       {error.includes('inválidos') && <p className="auth-alt">¿Primera vez por aquí? <a href="#/registro">Crea tu cuenta @unis.edu.gt</a>.</p>}
       <button className="btn-primary block" disabled={busy}>{busy ? '…' : (es ? 'Entrar' : 'Sign in')}</button>
     </form>
@@ -40,13 +47,24 @@ export function Register() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [sent, setSent] = useState(false)
   const [busy, setBusy] = useState(false)
   async function submit(e: React.FormEvent) {
     e.preventDefault(); setError(''); setBusy(true)
-    try { await register(name.trim(), email.trim(), password); go('#/lab') }
+    try {
+      const data = await register(name.trim(), email.trim(), password)
+      if (data.token) { go('#/lab'); return }
+      setSent(true)
+    }
     catch (err) { setError(err instanceof Error ? err.message : 'Register failed') }
     finally { setBusy(false) }
   }
+  if (sent) return <PublicShell><Card title={es ? 'Revisa tu correo' : 'Check your inbox'}>
+    <p>{es
+      ? `Mandamos un link de verificación a ${email.trim()}. Haz click para activar tu cuenta (válido 48 h). Sin ese click no hay entrada — así probamos que el correo es de verdad de la UNIS.`
+      : `We sent a verification link to ${email.trim()}. Click it to activate your account (valid 48 h). No click, no entry — that's how we prove the email really belongs to UNIS.`}</p>
+    <p className="auth-alt"><a href="#/login">{es ? 'Ir al login' : 'Go to login'}</a></p>
+  </Card></PublicShell>
   return <PublicShell><Card title={es ? 'Crear cuenta' : 'Create account'}>
     <form onSubmit={submit}>
       <label>{es ? 'NOMBRE' : 'NAME'}<input required value={name} onChange={e => setName(e.target.value)} /></label>

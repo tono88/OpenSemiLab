@@ -39,3 +39,14 @@ def init_db() -> None:
     from opensemilab_api import models_db  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    # Migración liviana para DBs creadas antes de la columna is_verified
+    # (compatible Postgres + SQLite).
+    from sqlalchemy import inspect, text
+
+    try:
+        cols = [c["name"] for c in inspect(engine).get_columns("users")]
+    except Exception:
+        cols = ["is_verified"]
+    if "is_verified" not in cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN is_verified BOOLEAN DEFAULT FALSE"))

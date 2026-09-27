@@ -21,7 +21,7 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
 from opensemilab_api.db import get_db, init_db
-from opensemilab_api.models_db import PasswordReset, User
+from opensemilab_api.models_db import EmailVerification, PasswordReset, User
 
 log = logging.getLogger("opensemilab.auth")
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -75,6 +75,21 @@ def is_allowed_email(email: str) -> bool:
     return False
 
 
+def _new_verify_token(db: Session, user: User) -> str:
+    raw = secrets.token_urlsafe(32)
+    db.add(
+        EmailVerification(
+            user_id=user.id,
+            token_sha=hashlib.sha256(raw.encode()).hexdigest(),
+            expires_at=datetime.utcnow() + timedelta(hours=48),
+        )
+    )
+    db.commit()
+    # TODO Fase C: enviar link por SMTP del LAB. En dev se loguea.
+    log.warning("Verify %s -> #/verificar?token=%s (solo dev, mandar por SMTP en LAB)", user.email, raw)
+    return raw
+
+
 def _issue_token(user: User) -> str:
     payload = {
         "sub": user.id,
@@ -123,6 +138,10 @@ class ForgotIn(BaseModel):
     email: EmailStr
 
 
+class ResendIn(BaseModel):
+    email: EmailStr
+
+
 class ResetIn(BaseModel):
     token: str = Field(min_length=16, max_length=128)
     new_password: str = Field(min_length=8, max_length=128)
@@ -146,7 +165,11 @@ def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)) 
     db.add(user)
     db.commit()
     db.refresh(user)
-    return {"token": _issue_token(user), "email": user.email, "role": user.role}
+    raw = _new_verify_token(db, user)
+    out: dict = {"ok": True, "email": user.email, "verify_required": True}
+    if os.getenv("OPENSEMILAB_EXPOSE_RESET_TOKEN") == "1":
+        out["dev_token"] = raw
+    return out
 
 
 @router.post("/login")
@@ -161,7 +184,43 @@ def login(body: LoginIn, request: Request, db: Session = Depends(get_db)) -> dic
         )
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Usuario desactivado")
+    if not user.is_verified:
+        raise HTTPException(
+            status_code=403,
+            detail="Verifica tu correo institucional antes de entrar (revisa tu inbox)",
+        )
     return {"token": _issue_token(user), "email": user.email, "role": user.role}
+
+
+@router.get("/verify")
+def verify(token: str, db: Session = Depends(get_db)) -> dict:
+    init_db()
+    digest = hashlib.sha256(token.encode()).hexdigest()
+    rec = db.query(EmailVerification).filter_by(token_sha=digest, used=False).first()
+    if rec is None or rec.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=422, detail="Link inválido o vencido, pide uno nuevo")
+    user = db.get(User, rec.user_id)
+    if user is None:
+        raise HTTPException(status_code=422, detail="Link inválido")
+    user.is_verified = True
+    rec.used = True
+    db.commit()
+    return {"token": _issue_token(user), "email": user.email, "role": user.role}
+
+
+@router.post("/resend")
+def resend(body: ResendIn, request: Request, db: Session = Depends(get_db)) -> dict:
+    _throttle(f"resend:{request.client.host if request.client else '?'}")
+    init_db()
+    email = body.email.strip().lower()
+    user = db.query(User).filter_by(email=email).first()
+    if user is None or user.is_verified:
+        return {"ok": True}
+    raw = _new_verify_token(db, user)
+    out: dict = {"ok": True}
+    if os.getenv("OPENSEMILAB_EXPOSE_RESET_TOKEN") == "1":
+        out["dev_token"] = raw
+    return out
 
 
 @router.get("/me")

@@ -6,7 +6,7 @@ type AuthState = {
   user: AuthUser | null
   ready: boolean
   login: (email: string, password: string) => Promise<void>
-  register: (name: string, email: string, password: string) => Promise<void>
+  register: (name: string, email: string, password: string) => Promise<{ ok?: boolean; verify_required?: boolean; dev_token?: string; token?: string }>
   logout: () => void
   refresh: () => Promise<void>
 }
@@ -63,9 +63,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const register = useCallback(async (name: string, email: string, password: string) => {
     const data = await authFetch('/api/v1/auth/register', { method: 'POST', body: JSON.stringify({ name, email, password }) })
-    localStorage.setItem(KEY, data.token)
-    setToken(data.token)
-    await refresh()
+    if (data.token) {
+      localStorage.setItem(KEY, data.token)
+      setToken(data.token)
+      await refresh()
+    }
+    return data as { ok?: boolean; verify_required?: boolean; dev_token?: string; token?: string }
   }, [refresh])
 
   const logout = useCallback(() => { localStorage.removeItem(KEY); setToken(null); setUser(null); location.hash = '#/' }, [])

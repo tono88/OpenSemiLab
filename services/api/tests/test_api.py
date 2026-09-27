@@ -24,7 +24,7 @@ def _seed_qa_user() -> None:
     email = "qa@unis.edu.gt"
     user = db.query(User).filter_by(email=email).first()
     if user is None:
-        user = User(email=email, name="QA", password_hash=_hash_pw("QaPrueba1234"))
+        user = User(email=email, name="QA", password_hash=_hash_pw("QaPrueba1234"), is_verified=True)
         db.add(user)
         db.commit()
         db.refresh(user)
@@ -39,6 +39,33 @@ def test_health():
     response = client.get("/api/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_email_verification_loop_gates_login():
+    import os
+
+    os.environ["OPENSEMILAB_EXPOSE_RESET_TOKEN"] = "1"
+    reg = client.post(
+        "/api/v1/auth/register",
+        json={"email": "nuevo@unis.edu.gt", "name": "Nuevo", "password": "Secreto123"},
+    )
+    assert reg.status_code == 201
+    assert reg.json()["verify_required"] is True
+    assert "token" not in reg.json()
+    blocked = client.post(
+        "/api/v1/auth/login",
+        json={"email": "nuevo@unis.edu.gt", "password": "Secreto123"},
+    )
+    assert blocked.status_code == 403
+    assert "erifica" in blocked.json()["detail"]
+    verified = client.get(f"/api/v1/auth/verify?token={reg.json()['dev_token']}")
+    assert verified.status_code == 200
+    assert "token" in verified.json()
+    ok = client.post(
+        "/api/v1/auth/login",
+        json={"email": "nuevo@unis.edu.gt", "password": "Secreto123"},
+    )
+    assert ok.status_code == 200
 
 
 def test_educational_simulation_is_self_describing():
