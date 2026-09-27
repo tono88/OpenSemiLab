@@ -1,6 +1,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import App from './App'
+import Root from './Root'
 import './styles.css'
 import './plot-enhancements.css'
 import './design.css'
@@ -11,5 +11,6 @@ import './project-workspace.css'
 import './result-artifacts.css'
 import './eda-visualizations.css'
 import './library-cards.css'
+import './pages.css'
 
-ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>)
+ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><Root /></React.StrictMode>)
