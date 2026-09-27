@@ -94,6 +94,6 @@ export function Admin() {
         <b>{e.tool} · {e.action}</b><small>{e.user_email} · {e.created_at.slice(0, 16).replace('T', ' ')}</small>
       </div>)}</div>
     </section>
-    <p className="auth-alt"><a onClick={() => go('#/lab')} style={{ cursor: 'pointer' }}>{es ? '← Volver al Lab' : '← Back to Lab'}</a></p>
+    <p className="auth-alt"><a onClick={() => go('#/lab')} style={{ cursor: 'pointer' }}>{es ? 'Volver al Lab' : 'Back to Lab'}</a></p>
   </PublicShell>
 }
