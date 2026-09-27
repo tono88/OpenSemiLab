@@ -26,6 +26,7 @@ export function Privacy() {
       <li>{es ? 'Cuenta: correo institucional, nombre y hash de contraseña. Nunca guardamos contraseñas en claro.' : 'Account: institutional email, name and password hash. We never store plain-text passwords.'}</li>
       <li>{es ? 'Proyectos: cada proyecto pertenece a su usuario; nadie más puede verlo salvo administradores del laboratorio con fines de soporte e investigación.' : 'Projects: each project belongs to its user; nobody else can see it except lab admins for support and research.'}</li>
       <li>{es ? 'Analítica educativa: eventos de diseño agregados (qué herramientas se usan, errores frecuentes) para mejorar la enseñanza. No vendemos ni compartimos datos con terceros.' : 'Educational analytics: aggregated design events (which tools are used, frequent errors) to improve teaching. We do not sell or share data with third parties.'}</li>
+      <li>{es ? 'Galería abierta: por diseño estilo Tinkercad, tus proyectos son visibles y clonables por cualquier cuenta @unis.edu.gt desde la Galería.' : 'Open gallery: Tinkercad-style, your projects are visible and cloneable by any @unis.edu.gt account from the Gallery.'}</li>
       <li>{es ? 'Puedes pedir la eliminación de tu cuenta y tus datos escribiendo a tu administrador del laboratorio.' : 'You can request deletion of your account and data by writing to your lab administrator.'}</li>
     </ol>
   </article></PublicShell>

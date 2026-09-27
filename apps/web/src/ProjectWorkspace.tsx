@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { apiFetch } from './auth'
+import { trackEvent } from './serverProjects'
 import type { ProjectFile, StoredProject } from './projectStore'
 import type { Artifact, RunResult, RunSnapshot, SimulationData } from './eda-results'
 import SpiceViewer from './SpiceViewer'
@@ -268,7 +269,7 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
       if(action==='spice'&&!spiceEntry) throw new Error(es?'Este proyecto no contiene un netlist SPICE ejecutable.':'This project does not contain an executable SPICE netlist.')
       const top=action==='simulate'||action==='vhdl'?execution.testbenchTop:execution.rtlTop
       const response=await apiFetch('/api/v1/eda/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,top:top??'top',entry:action==='spice'?spiceEntry?.path:undefined,sources})})
-      const data=await response.json();if(!response.ok) throw new Error(data.detail??'EDA execution failed');acceptResult(data,action)
+      const data=await response.json();if(!response.ok) throw new Error(data.detail??'EDA execution failed');acceptResult(data,action);trackEvent('eda',action,project.id)
     } catch(reason) {setError(reason instanceof Error?reason.message:'EDA execution failed')}
     finally {setRunning('')}
   }
@@ -296,7 +297,7 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
       if(!Object.keys(sources).length)throw new Error(es?'Agregue los archivos de entrada requeridos para este adaptador.':'Add the input files required by this adapter.')
       const actionTop=action==='fpga'?fpgaTop:(execution.rtlTop??'top')
       const response=await apiFetch('/api/v1/eda/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,top:actionTop,entry,sources,encodings,adapter})})
-      const data=await response.json();if(!response.ok)throw new Error(data.detail??'EDA adapter failed');acceptResult(data,action)
+      const data=await response.json();if(!response.ok)throw new Error(data.detail??'EDA adapter failed');acceptResult(data,action);trackEvent('eda-adapter',action,project.id)
       const currentManifest=readManifest(project)
       if(adapter&&project.files.some(file=>file.path==='project.json'))onChange({...project,updatedAt:new Date().toISOString(),files:project.files.map(file=>file.path==='project.json'?{...file,content:JSON.stringify({...currentManifest,execution:action==='fpga'?{...(currentManifest.execution??{}),fpga_top:fpgaTop}:currentManifest.execution,adapters:{...(currentManifest.adapters??{}),[action]:adapter}},null,2)+'\n'}:file)})
     } catch(reason) {setError(reason instanceof Error?reason.message:'EDA adapter failed')}
@@ -351,7 +352,7 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
       const created=await response.json();if(!response.ok) throw new Error(created.detail??'Could not start physical implementation')
       localStorage.setItem(activePhysicalKey,created.job_id)
       setPhysicalStatus(`${es?'Trabajo':'Job'} ${created.job_id} · ${es?'en cola':'queued'}`)
-      await pollPhysicalJob(created.job_id)
+      await pollPhysicalJob(created.job_id);trackEvent('librelane','physical',project.id,{pdk:project.pdk})
     } catch(reason) {setError(reason instanceof Error?reason.message:'Physical implementation failed')}
   }
 

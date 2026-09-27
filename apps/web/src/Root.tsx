@@ -6,6 +6,9 @@ import { Team } from './pages/Team'
 import { Privacy, Terms } from './pages/Legal'
 import { Forgot, Login, Register } from './pages/AuthPages'
 import { Verify } from './pages/Verify'
+import { Admin } from './pages/Admin'
+import { Gallery } from './pages/Gallery'
+import { syncProjects } from './serverProjects'
 
 function route(): string {
   const h = location.hash.replace(/^#/, '') || '/'
@@ -14,10 +17,27 @@ function route(): string {
 
 function Gate({ children }: { children: React.ReactNode }) {
   const { user, ready } = useAuth()
+  const [synced, setSynced] = useState(false)
   useEffect(() => { if (ready && !user) location.hash = '#/login' }, [ready, user])
+  useEffect(() => {
+    if (!user) return
+    setSynced(false)
+    const timer = window.setTimeout(() => setSynced(true), 8000)
+    void syncProjects().finally(() => { window.clearTimeout(timer); setSynced(true) })
+    return () => window.clearTimeout(timer)
+  }, [user?.id])
   if (!ready) return <div className="app-shell pub"><main className="pub-main"><p>…</p></main></div>
   if (!user) return <Login />
+  if (!synced) return <div className="app-shell pub"><main className="pub-main"><p>Sincronizando proyectos…</p></main></div>
   return <>{children}</>
+}
+
+function AdminGate() {
+  const { user, ready } = useAuth()
+  if (!ready) return <div className="app-shell pub"><main className="pub-main"><p>…</p></main></div>
+  if (!user) return <Login />
+  if (user.role !== 'admin') return <Login />
+  return <Admin />
 }
 
 function Router() {
@@ -37,6 +57,8 @@ function Router() {
   if (r === '/registro') return <Register />
   if (r === '/recuperar') return <Forgot />
   if (r.startsWith('/verificar')) return <Verify />
+  if (r === '/galeria') return <Gate><Gallery /></Gate>
+  if (r === '/admin') return <AdminGate />
   return <Gate><App /></Gate>
 }
 

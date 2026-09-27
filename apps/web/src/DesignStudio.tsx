@@ -3,6 +3,7 @@ import { apiFetch } from './auth'
 import ProjectWorkspace from './ProjectWorkspace'
 import PdkManager, { type PrivatePdk } from './PdkManager'
 import { createProject, loadProjects, normalizeProjectExecution, saveProjects, type StoredProject } from './projectStore'
+import { deleteServerProject, pushProject, trackEvent } from './serverProjects'
 
 interface Template { id: string; title: string; description: string; outputs: string[]; recommended_pdk: string; tags: string[] }
 interface Stage { id: string; title: string; purpose: string; tools: string[]; output: string; status: 'ready' | 'adapter_pending' | 'optional' }
@@ -74,12 +75,13 @@ export default function DesignStudio({ locale }: { locale: 'es' | 'en' }) {
       const project=createProject({name,kind,pdk,level,language})
       const next=[project,...projects]
       setProjects(next);saveProjects(next);setActiveProjectId(project.id)
+      void pushProject(project);trackEvent('design-studio','plan-created',project.id,{kind,pdk})
     } catch (reason) { setError(reason instanceof Error ? reason.message : (es?'Servicio de diseño no disponible.':'Design service unavailable.')) }
   }
 
   function updateProject(updated:StoredProject) {
     const next=projects.map(project=>project.id===updated.id?updated:project)
-    setProjects(next);saveProjects(next)
+    setProjects(next);saveProjects(next);void pushProject(updated)
   }
 
   function openProject(project:StoredProject) {
@@ -88,7 +90,7 @@ export default function DesignStudio({ locale }: { locale: 'es' | 'en' }) {
 
   function deleteProject(id:string) {
     if(!window.confirm(es?'¿Eliminar este proyecto local?':'Delete this local project?')) return
-    const next=projects.filter(project=>project.id!==id);setProjects(next);saveProjects(next);if(activeProjectId===id)setActiveProjectId(null)
+    const next=projects.filter(project=>project.id!==id);setProjects(next);saveProjects(next);if(activeProjectId===id)setActiveProjectId(null);void deleteServerProject(id)
   }
 
   function acceptImportedProject(imported:StoredProject) {
@@ -96,7 +98,7 @@ export default function DesignStudio({ locale }: { locale: 'es' | 'en' }) {
     imported=normalizeProjectExecution(imported)
     imported.id=projects.some(project=>project.id===imported.id)?crypto.randomUUID():(imported.id||crypto.randomUUID())
     imported.updatedAt=new Date().toISOString()
-    const next=[imported,...projects];setProjects(next);saveProjects(next);openProject(imported)
+    const next=[imported,...projects];setProjects(next);saveProjects(next);openProject(imported);void pushProject(imported)
   }
 
   async function importProject(file:File) {
@@ -112,7 +114,7 @@ export default function DesignStudio({ locale }: { locale: 'es' | 'en' }) {
       const response=await apiFetch('/api/v1/design/import-github',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:githubUrl.trim()})})
       const imported=await response.json()
       if(!response.ok)throw new Error(imported.detail??(es?'No se pudo importar el repositorio.':'Could not import the repository.'))
-      acceptImportedProject(imported as StoredProject)
+      acceptImportedProject(imported as StoredProject);trackEvent('design-studio','github-import','',{url:githubUrl.trim()})
     } catch(reason) {setError(reason instanceof Error?reason.message:(es?'No se pudo importar el repositorio.':'Could not import the repository.'))}
     finally {setImportingGithub(false)}
   }

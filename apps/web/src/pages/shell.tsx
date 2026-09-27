@@ -7,8 +7,10 @@ function TopBar({ onNav }: { onNav: (h: string) => void }) {
     <div className="brand" onClick={() => onNav('#/')} style={{ cursor: 'pointer' }}><div className="mark">OS</div><div><strong>OpenSemiLab</strong><small>UNIS · LAB</small></div></div>
     <nav className="pub-links">
       <button onClick={() => onNav('#/equipo')}>Equipo</button>
+      <button onClick={() => onNav('#/galeria')}>Galería</button>
       <button onClick={() => onNav('#/terminos')}>Términos</button>
       <button onClick={() => onNav('#/privacidad')}>Privacidad</button>
+      {user?.role === 'admin' && <button onClick={() => onNav('#/admin')}>Admin</button>}
       {user ? <>
         <button className="cta" onClick={() => onNav('#/lab')}>Entrar al Lab</button>
         <button onClick={logout} title={user.email}>Salir</button>
