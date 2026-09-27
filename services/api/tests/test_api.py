@@ -43,18 +43,20 @@ def test_health():
 
 def test_email_verification_loop_gates_login():
     import os
+    import uuid
 
     os.environ["OPENSEMILAB_EXPOSE_RESET_TOKEN"] = "1"
+    email = f"nuevo-{uuid.uuid4().hex[:8]}@unis.edu.gt"
     reg = client.post(
         "/api/v1/auth/register",
-        json={"email": "nuevo@unis.edu.gt", "name": "Nuevo", "password": "Secreto123"},
+        json={"email": email, "name": "Nuevo", "password": "Secreto123"},
     )
     assert reg.status_code == 201
     assert reg.json()["verify_required"] is True
     assert "token" not in reg.json()
     blocked = client.post(
         "/api/v1/auth/login",
-        json={"email": "nuevo@unis.edu.gt", "password": "Secreto123"},
+        json={"email": email, "password": "Secreto123"},
     )
     assert blocked.status_code == 403
     assert "erifica" in blocked.json()["detail"]
@@ -63,9 +65,73 @@ def test_email_verification_loop_gates_login():
     assert "token" in verified.json()
     ok = client.post(
         "/api/v1/auth/login",
-        json={"email": "nuevo@unis.edu.gt", "password": "Secreto123"},
+        json={"email": email, "password": "Secreto123"},
     )
     assert ok.status_code == 200
+
+
+def test_projects_crud_and_gallery():
+    created = client.post("/api/v1/projects", json={"name": "Mi MCU", "data": {"kind": "microcontroller"}})
+    assert created.status_code == 201
+    pid = created.json()["id"]
+    mine = client.get("/api/v1/projects")
+    assert [p["id"] for p in mine.json()] == [pid]
+    updated = client.put(f"/api/v1/projects/{pid}", json={"name": "Mi MCU v2", "data": {"kind": "microcontroller"}})
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "Mi MCU v2"
+    gallery = client.get("/api/v1/projects/gallery")
+    assert pid in [p["id"] for p in gallery.json()]
+    assert client.delete(f"/api/v1/projects/{pid}").status_code == 204
+    assert client.get("/api/v1/projects").json() == []
+
+
+def test_events_ingest():
+    assert client.post("/api/v1/events", json={"project_id": "x", "tool": "yosys", "action": "synthesize"}).status_code == 202
+
+
+def test_admin_gates_and_powers():
+    from fastapi.testclient import TestClient as TC
+
+    from opensemilab_api.db import SessionLocal as SL
+    from opensemilab_api.main import app as _app
+    from opensemilab_api.models_db import User as _User
+
+    anon = TC(_app)
+    assert anon.get("/api/v1/admin/stats").status_code == 401
+    assert client.get("/api/v1/admin/stats").status_code == 403
+    db = SL()
+    qa = db.query(_User).filter_by(email="qa@unis.edu.gt").first()
+    qa.role = "admin"
+    db.commit()
+    db.close()
+    stats = client.get("/api/v1/admin/stats")
+    assert stats.status_code == 200
+    assert stats.json()["events"] >= 1
+    users = client.get("/api/v1/admin/users").json()
+    assert any(u["email"] == "qa@unis.edu.gt" for u in users)
+    other = client.post("/api/v1/projects", json={"name": "Borrable", "data": {}}).json()
+    assert client.delete(f"/api/v1/admin/projects/{other['id']}").status_code == 204
+    assert client.get("/api/v1/projects").json() == []
+
+
+def test_user_cannot_touch_others_project():
+    from opensemilab_api.auth import _hash_pw as _h, _issue_token as _t
+    from opensemilab_api.db import SessionLocal as SL
+    from opensemilab_api.models_db import User as _User
+
+    db = SL()
+    intruder = db.query(_User).filter_by(email="intruso@unis.edu.gt").first()
+    if intruder is None:
+        intruder = _User(email="intruso@unis.edu.gt", name="I", password_hash=_h("x" * 16), is_verified=True)
+        db.add(intruder)
+        db.commit()
+        db.refresh(intruder)
+    itoken = _t(intruder)
+    db.close()
+    mine = client.post("/api/v1/projects", json={"name": "Privado", "data": {}}).json()
+    r = client.put(f"/api/v1/projects/{mine['id']}", json={"name": "Hack", "data": {}}, headers={"Authorization": f"Bearer {itoken}"})
+    assert r.status_code == 404
+    assert client.delete(f"/api/v1/projects/{mine['id']}").status_code == 204
 
 
 def test_educational_simulation_is_self_describing():

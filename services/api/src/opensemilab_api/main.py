@@ -7,6 +7,8 @@ from fastapi.responses import FileResponse
 
 from opensemilab_api import __version__
 from opensemilab_api.auth import get_current_user, router as auth_router
+from opensemilab_api.admin import router as admin_router
+from opensemilab_api.projects import router as projects_router
 from opensemilab_api.db import init_db
 from opensemilab_api.models_db import User
 from opensemilab_api.design import DesignPlan, DesignRequest, DesignTemplate, TEMPLATES, make_plan
@@ -31,6 +33,8 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization"],
 )
 app.include_router(auth_router)
+app.include_router(projects_router)
+app.include_router(admin_router)
 
 
 @app.on_event("startup")
