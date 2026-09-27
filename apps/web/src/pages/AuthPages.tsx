@@ -25,7 +25,7 @@ export function Login() {
       <label>EMAIL UNIS<input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="usuario@unis.edu.gt" /></label>
       <label>{es ? 'CONTRASEÑA' : 'PASSWORD'}<input type="password" required value={password} onChange={e => setPassword(e.target.value)} /></label>
       {error && <p className="error">{error}</p>}
-      <button className="run" disabled={busy}>{busy ? '…' : (es ? 'Entrar →' : 'Sign in →')}</button>
+      <button className="btn-primary block" disabled={busy}>{busy ? '…' : (es ? 'Entrar →' : 'Sign in →')}</button>
     </form>
     <p className="auth-alt"><a href="#/recuperar">{es ? 'Olvidé mi contraseña' : 'Forgot password'}</a> · <a href="#/registro">{es ? 'Crear cuenta' : 'Create account'}</a></p>
   </Card></PublicShell>
@@ -52,7 +52,7 @@ export function Register() {
       <label>EMAIL UNIS<input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="usuario@unis.edu.gt" /></label>
       <label>{es ? 'CONTRASEÑA (MÍN. 8)' : 'PASSWORD (MIN. 8)'}<input type="password" required minLength={8} value={password} onChange={e => setPassword(e.target.value)} /></label>
       {error && <p className="error">{error}</p>}
-      <button className="run" disabled={busy}>{busy ? '…' : (es ? 'Registrarme →' : 'Sign up →')}</button>
+      <button className="btn-primary block" disabled={busy}>{busy ? '…' : (es ? 'Registrarme →' : 'Sign up →')}</button>
     </form>
     <p className="auth-alt">{es ? 'Solo @unis.edu.gt durante el piloto. Al registrarte aceptas los ' : 'Only @unis.edu.gt during pilot. By signing up you accept the '}<a href="#/terminos">{es ? 'Términos' : 'Terms'}</a>.</p>
   </Card></PublicShell>
@@ -73,7 +73,7 @@ export function Forgot() {
     {done ? <p>{es ? 'Si el correo existe, enviamos instrucciones (en el LAB por email; en dev revisa el log del API).' : 'If the email exists, we sent instructions (via email in LAB; check API log in dev).'}</p> : <form onSubmit={submit}>
       <label>EMAIL UNIS<input type="email" required value={email} onChange={e => setEmail(e.target.value)} /></label>
       {error && <p className="error">{error}</p>}
-      <button className="run">{es ? 'Enviar instrucciones →' : 'Send instructions →'}</button>
+      <button className="btn-primary block">{es ? 'Enviar instrucciones →' : 'Send instructions →'}</button>
     </form>}
   </Card></PublicShell>
 }

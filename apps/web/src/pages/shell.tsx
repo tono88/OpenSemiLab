@@ -16,7 +16,7 @@ function TopBar({ onNav }: { onNav: (h: string) => void }) {
         <button onClick={() => onNav('#/login')}>Login</button>
         <button className="cta" onClick={() => onNav('#/registro')}>Registro →</button>
       </>}
-      <span className="locale-switch"><button className={locale === 'es' ? 'active' : ''} onClick={() => setLocale('es')}>ES</button><button className={locale === 'en' ? 'active' : ''} onClick={() => setLocale('en')}>EN</button></span>
+      <span className="lang"><button className={locale === 'es' ? 'active' : ''} onClick={() => setLocale('es')}>ES</button><button className={locale === 'en' ? 'active' : ''} onClick={() => setLocale('en')}>EN</button></span>
     </nav>
   </header>
 }

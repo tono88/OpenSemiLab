@@ -11,8 +11,9 @@
 .pub-hero h1 span{color:#78978b}
 .lede{color:#91a9a0;max-width:640px;font-size:16px;line-height:1.7}
 .pub-cta-row{display:flex;gap:12px;margin:26px 0 14px;flex-wrap:wrap}
-.pub-cta-row .run{background:#45e6a6;border:0;color:#07120f;font-weight:700;padding:14px 26px;cursor:pointer}
-.pub-cta-row .ghost{background:none;border:1px solid #ffffff2a;color:#dcebe5;padding:14px 26px;cursor:pointer}
+.btn-primary{background:#45e6a6;border:0;color:#07120f;font-weight:700;padding:14px 26px;cursor:pointer;width:auto;display:inline-block}
+.btn-ghost{background:none;border:1px solid #ffffff2a;color:#dcebe5;padding:14px 26px;cursor:pointer;width:auto;display:inline-block}
+.btn-primary.block{width:100%}
 .pub-note{font:11px 'DM Mono',monospace;color:#78978b}
 .pub-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin:40px 0}
 .pub-grid>div{border:1px solid #ffffff18;padding:24px}
@@ -41,12 +42,21 @@
 .auth-card form{display:grid;gap:14px}
 .auth-card label{display:grid;gap:8px;font:10px 'DM Mono',monospace;letter-spacing:.12em;color:#78978b}
 .auth-card input{background:#0b1b16;border:1px solid #ffffff22;color:#e9fff7;padding:12px 14px;font-size:15px;letter-spacing:normal}
-.auth-card .run{background:#45e6a6;border:0;color:#07120f;font-weight:700;padding:14px;cursor:pointer}
+.auth-card .btn-primary{width:100%}
 .auth-card .error{color:#ff9d9d;font-size:13px;margin:0}
 .auth-alt{font-size:13px;color:#91a9a0;margin:16px 0 0}
 .auth-alt a{color:#45e6a6}
 .pub footer,.pub-main+footer{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:22px 5vw;border-top:1px solid #ffffff18;font:10px 'DM Mono',monospace;color:#78978b;letter-spacing:.1em}
 .pub footer a,.pub-main+footer a{color:#91a9a0;text-decoration:none;margin-left:14px}
-.locale-switch button{background:none;border:0;color:#6f8b81;cursor:pointer;font:11px 'DM Mono',monospace;padding:8px}
-.locale-switch button.active{color:#45e6a6}
+.lang{display:inline-flex;border:1px solid #ffffff2a}
+.lang button{background:transparent;border:0;color:#78978b;cursor:pointer;font:10px 'DM Mono',monospace;padding:8px 12px}
+.lang button.active{background:#45e6a6;color:#04100c;font-weight:700}
 @media(max-width:700px){.team-card{grid-template-columns:80px 1fr}.team-card>img{width:80px;height:80px}}
+@media(max-width:860px){
+.pub-top{height:auto;padding:14px 5vw;flex-wrap:wrap;gap:10px}
+.pub-links{width:100%;justify-content:flex-start}
+.pub-hero{padding:44px 0 28px}
+.pub-cta-row{flex-direction:column}
+.pub-cta-row .btn-primary,.pub-cta-row .btn-ghost{width:100%;text-align:center}
+.pub-main+footer,.pub footer{flex-direction:column;gap:8px}
+}
