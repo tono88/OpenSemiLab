@@ -70,6 +70,16 @@ def test_email_verification_loop_gates_login():
     assert ok.status_code == 200
 
 
+def test_login_lockout_escalates():
+    email = "bloqueado@unis.edu.gt"
+    for _ in range(5):
+        r = client.post("/api/v1/auth/login", json={"email": email, "password": "mala"})
+        assert r.status_code == 401
+    locked = client.post("/api/v1/auth/login", json={"email": email, "password": "mala"})
+    assert locked.status_code == 429
+    assert "loqueado" in locked.json()["detail"]
+
+
 def test_projects_crud_and_gallery():
     created = client.post("/api/v1/projects", json={"name": "Mi MCU", "data": {"kind": "microcontroller"}})
     assert created.status_code == 201
@@ -98,6 +108,11 @@ def test_admin_gates_and_powers():
 
     anon = TC(_app)
     assert anon.get("/api/v1/admin/stats").status_code == 401
+    db0 = SL()
+    qa0 = db0.query(_User).filter_by(email="qa@unis.edu.gt").first()
+    qa0.role = "user"
+    db0.commit()
+    db0.close()
     assert client.get("/api/v1/admin/stats").status_code == 403
     db = SL()
     qa = db.query(_User).filter_by(email="qa@unis.edu.gt").first()

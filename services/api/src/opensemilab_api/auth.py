@@ -27,7 +27,40 @@ log = logging.getLogger("opensemilab.auth")
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 _bearer = HTTPBearer(auto_error=False)
 
-# Freno simple anti fuerza-bruta: 8 intentos / 5 min por IP.
+# Freno anti fuerza-bruta con escalado: 5 fallos → 10 min, 8 → 30 min,
+# 12 → 1 h, 16+ → 12 h. Clave por IP+correo (una IP de la U no bloquea a otros).
+# En memoria (piloto, una instancia): al reiniciar se limpia.
+_LOCK: dict[str, dict] = {}
+_LEVELS = [(5, 10), (8, 30), (12, 60), (16, 720)]  # (fallos acumulados, minutos)
+
+
+def _lock_check(key: str) -> None:
+    rec = _LOCK.get(key)
+    if rec and datetime.utcnow() < rec["until"]:
+        left = int((rec["until"] - datetime.utcnow()).total_seconds() // 60) + 1
+        raise HTTPException(
+            status_code=429,
+            detail=f"Demasiados intentos. Bloqueado ~{left} min por seguridad",
+        )
+
+
+def _lock_fail(key: str) -> None:
+    rec = _LOCK.get(key, {"fails": 0, "until": datetime.min})
+    rec["fails"] += 1
+    minutes = 0
+    for threshold, mins in _LEVELS:
+        if rec["fails"] >= threshold:
+            minutes = mins
+    if minutes:
+        rec["until"] = datetime.utcnow() + timedelta(minutes=minutes)
+    _LOCK[key] = rec
+
+
+def _lock_ok(key: str) -> None:
+    _LOCK.pop(key, None)
+
+
+# Ventana simple para endpoints que no son login (registro, reenvío).
 _ATTEMPTS: dict[str, list[datetime]] = {}
 _ATTEMPT_LIMIT = 8
 _ATTEMPT_WINDOW = timedelta(minutes=5)
@@ -174,14 +207,17 @@ def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)) 
 
 @router.post("/login")
 def login(body: LoginIn, request: Request, db: Session = Depends(get_db)) -> dict:
-    _throttle(f"login:{request.client.host if request.client else '?'}")
     init_db()
     email = body.email.strip().lower()
+    key = f"login:{request.client.host if request.client else '?'}:{email}"
+    _lock_check(key)
     user = db.query(User).filter_by(email=email).first()
     if user is None or not _verify_pw(body.password, user.password_hash):
+        _lock_fail(key)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Correo o contraseña inválidos"
         )
+    _lock_ok(key)
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Usuario desactivado")
     if not user.is_verified:
