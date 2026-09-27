@@ -29,7 +29,7 @@ export function Team() {
         <img src={p.photo} alt={p.name} loading="lazy" />
         <div><h2>{p.name}</h2><p className="role">{es ? p.roleEs : p.roleEn}</p>
           <a className="mail" href={`mailto:${p.email}`}>{p.email}</a>
-          <div className="team-links"><a href={p.link} target="_blank" rel="noreferrer">LinkedIn ↗</a></div>
+          <div className="team-links"><a href={p.link} target="_blank" rel="noreferrer">LinkedIn</a></div>
         </div>
         <figure><img src={p.qr} alt={`QR LinkedIn ${p.name}`} loading="lazy" /><figcaption>LinkedIn QR</figcaption></figure>
       </article>)}
