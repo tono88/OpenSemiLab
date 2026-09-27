@@ -15,7 +15,7 @@ import secrets
 from datetime import datetime, timedelta
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
@@ -92,6 +92,21 @@ def _verify_pw(password: str, stored: str) -> bool:
 JWT_SECRET = os.getenv("JWT_SECRET", "dev-only-change-me")
 JWT_EXPIRE_MIN = int(os.getenv("JWT_EXPIRE_MIN", "720"))
 
+SESSION_COOKIE = "opensemilab_session"
+_COOKIE_SECURE = os.getenv("OPENSEMILAB_COOKIE_SECURE", "0") == "1"
+
+
+def _cookie_kwargs() -> dict:
+    kw: dict = {
+        "httponly": True,
+        "samesite": "lax",
+        "path": "/",
+        "max_age": JWT_EXPIRE_MIN * 60,
+    }
+    if _COOKIE_SECURE:
+        kw["secure"] = True
+    return kw
+
 if JWT_SECRET == "dev-only-change-me":
     log.warning("JWT_SECRET es el valor de dev — define uno real en el LAB")
 
@@ -134,13 +149,16 @@ def _issue_token(user: User) -> str:
 
 
 def get_current_user(
+    request: Request,
     creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
     db: Session = Depends(get_db),
 ) -> User:
-    if creds is None:
+    # Sesión por cookie httpOnly (front) o Bearer (tests/Swagger/API directa).
+    token = creds.credentials if creds is not None else request.cookies.get(SESSION_COOKIE)
+    if not token:
         raise HTTPException(status_code=401, detail="Falta sesión (login requerido)")
     try:
-        data = jwt.decode(creds.credentials, JWT_SECRET, algorithms=["HS256"])
+        data = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Sesión inválida o vencida") from None
     user = db.get(User, data.get("sub", ""))
@@ -206,7 +224,9 @@ def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)) 
 
 
 @router.post("/login")
-def login(body: LoginIn, request: Request, db: Session = Depends(get_db)) -> dict:
+def login(
+    body: LoginIn, request: Request, response: Response, db: Session = Depends(get_db)
+) -> dict:
     init_db()
     email = body.email.strip().lower()
     key = f"login:{request.client.host if request.client else '?'}:{email}"
@@ -225,11 +245,19 @@ def login(body: LoginIn, request: Request, db: Session = Depends(get_db)) -> dic
             status_code=403,
             detail="Verifica tu correo institucional antes de entrar (revisa tu inbox)",
         )
-    return {"token": _issue_token(user), "email": user.email, "role": user.role}
+    token = _issue_token(user)
+    response.set_cookie(SESSION_COOKIE, token, **_cookie_kwargs())
+    return {"token": token, "email": user.email, "role": user.role}
+
+
+@router.post("/logout")
+def logout(response: Response) -> dict:
+    response.delete_cookie(SESSION_COOKIE, path="/")
+    return {"ok": True}
 
 
 @router.get("/verify")
-def verify(token: str, db: Session = Depends(get_db)) -> dict:
+def verify(token: str, response: Response, db: Session = Depends(get_db)) -> dict:
     init_db()
     digest = hashlib.sha256(token.encode()).hexdigest()
     rec = db.query(EmailVerification).filter_by(token_sha=digest, used=False).first()
@@ -241,7 +269,9 @@ def verify(token: str, db: Session = Depends(get_db)) -> dict:
     user.is_verified = True
     rec.used = True
     db.commit()
-    return {"token": _issue_token(user), "email": user.email, "role": user.role}
+    fresh = _issue_token(user)
+    response.set_cookie(SESSION_COOKIE, fresh, **_cookie_kwargs())
+    return {"token": fresh, "email": user.email, "role": user.role}
 
 
 @router.post("/resend")

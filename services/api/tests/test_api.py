@@ -80,6 +80,32 @@ def test_login_lockout_escalates():
     assert "loqueado" in locked.json()["detail"]
 
 
+def test_cookie_session_works_without_bearer():
+    from fastapi.testclient import TestClient as TC
+
+    from opensemilab_api.auth import _hash_pw as _h
+    from opensemilab_api.db import SessionLocal as SL
+    from opensemilab_api.main import app as _app
+    from opensemilab_api.models_db import User as _User
+
+    db = SL()
+    cookie = db.query(_User).filter_by(email="galleta@unis.edu.gt").first()
+    if cookie is None:
+        cookie = _User(email="galleta@unis.edu.gt", name="G", password_hash=_h("Secreto123"), is_verified=True)
+        db.add(cookie)
+        db.commit()
+    db.close()
+    c2 = TC(_app)
+    r = c2.post("/api/v1/auth/login", json={"email": "galleta@unis.edu.gt", "password": "Secreto123"})
+    assert r.status_code == 200
+    assert "opensemilab_session" in r.cookies
+    me = c2.get("/api/v1/auth/me")
+    assert me.status_code == 200
+    assert me.json()["email"] == "galleta@unis.edu.gt"
+    assert c2.post("/api/v1/auth/logout").status_code == 200
+    assert c2.get("/api/v1/auth/me").status_code == 401
+
+
 def test_projects_crud_and_gallery():
     created = client.post("/api/v1/projects", json={"name": "Mi MCU", "data": {"kind": "microcontroller"}})
     assert created.status_code == 201

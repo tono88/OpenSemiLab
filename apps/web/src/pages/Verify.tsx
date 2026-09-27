@@ -18,8 +18,7 @@ export function Verify() {
     apiFetch(`/api/v1/auth/verify?token=${encodeURIComponent(token)}`)
       .then(async res => {
         if (!res.ok) { setState('bad'); return }
-        const data = await res.json()
-        localStorage.setItem('opensemilab.token', data.token)
+        await res.json()
         await refresh()
         setState('ok')
         setTimeout(() => go('#/lab'), 1200)
