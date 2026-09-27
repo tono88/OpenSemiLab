@@ -10,7 +10,12 @@ import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./opensemilab-dev.db")
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    # SQLite de dev junto al código (ruta absoluta): seed, server y tests
+    # siempre usan el mismo archivo sin importar desde dónde se corran.
+    _here = os.path.dirname(os.path.abspath(__file__)).replace(os.sep, "/")
+    DATABASE_URL = f"sqlite:///{_here}/opensemilab-dev.db"
 _connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True, connect_args=_connect_args)
