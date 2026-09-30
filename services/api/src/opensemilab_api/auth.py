@@ -1,7 +1,7 @@
 """Auth email+password solo dominio institucional.
 
-Regla activa: solo `@unis.edu.gt` (pedido de André/Estuardo por mientras).
-Regla futura (comentada abajo): cualquier `.edu` / `.edu.gt`.
+Regla activa: cualquier `.edu` / `.edu.<ccTLD>` (ej: .edu, .edu.gt, .edu.mx, .edu.sv).
+Cobertura: dominio .edu (EE. UU.) + aproximadamente 60 países con edu como dominio de segundo nivel.
 
 Sin OAuth de Google por decisión explícita.
 Recuperación: token de un solo uso; en dev se devuelve/loguea,
@@ -11,6 +11,7 @@ en LAB se manda por SMTP (pendiente Fase C).
 import hashlib
 import logging
 import os
+import re
 import secrets
 from datetime import datetime, timedelta
 
@@ -112,15 +113,13 @@ if JWT_SECRET == "dev-only-change-me":
 
 
 # --- dominio permitido -------------------------------------------------------
+# Acepta .edu y .edu.<ccTLD> (ej: universidad.edu, unis.edu.gt, itesm.edu.mx).
+_EDU_RE = re.compile(r"\.edu(\.[a-z]{2,})?$")
+
+
 def is_allowed_email(email: str) -> bool:
     domain = email.strip().lower().rsplit("@", 1)[-1]
-    # ACTIVO: solo UNIS por mientras.
-    if domain == "unis.edu.gt":
-        return True
-    # FUTURO (.edu general, dejar comentado según lo pedido):
-    # if domain == "unis.edu.gt" or domain.endswith(".edu") or domain.endswith(".edu.gt"):
-    #     return True
-    return False
+    return bool(_EDU_RE.search(domain))
 
 
 def _new_verify_token(db: Session, user: User) -> str:
@@ -207,7 +206,7 @@ def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)) 
     if not is_allowed_email(email):
         raise HTTPException(
             status_code=403,
-            detail="Por ahora solo correos @unis.edu.gt (soporte .edu general viene después)",
+            detail="Solo correos institucionales .edu (ej: tu@universidad.edu, tu@unis.edu.gt, tu@uni.edu.mx)",
         )
     if db.query(User).filter_by(email=email).first():
         raise HTTPException(status_code=409, detail="Ese correo ya está registrado")

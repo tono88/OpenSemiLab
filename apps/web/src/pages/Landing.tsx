@@ -11,10 +11,10 @@ export function Landing() {
         ? 'OpenSemiLab es el laboratorio de semiconductores de la Universidad del Istmo: explore una unión PN desde el navegador o lleve sus diseños hasta implementación RTL-to-GDSII con motores abiertos reales.'
         : 'OpenSemiLab is Universidad del Istmo\u2019s semiconductor laboratory: explore a PN junction from your browser or take your designs all the way to RTL-to-GDSII implementation with real open engines.'}</p>
       <div className="pub-cta-row">
-        <button className="btn-primary" onClick={() => go('#/registro')}>{es ? 'Crear cuenta UNIS' : 'Create UNIS account'}</button>
+        <button className="btn-primary" onClick={() => go('#/registro')}>{es ? 'Crear cuenta .edu' : 'Create .edu account'}</button>
         <button className="btn-ghost" onClick={() => go('#/login')}>{es ? 'Ya tengo cuenta' : 'I already have an account'}</button>
       </div>
-      <small className="pub-note">{es ? 'Acceso restringido a correos institucionales @unis.edu.gt durante la fase piloto.' : 'Access restricted to @unis.edu.gt institutional emails during the pilot phase.'}</small>
+      <small className="pub-note">{es ? 'Acceso con correo institucional .edu (.edu, .edu.gt, .edu.mx, .edu.sv, entre otros).' : 'Access with institutional .edu email (.edu, .edu.gt, .edu.mx, .edu.sv, among others).'}</small>
     </section>
     <section className="pub-grid">
       <div><h3>{es ? 'Device Lab' : 'Device Lab'}</h3><p>{es ? 'Unión PN 1D con solver educativo determinista, curvas I–V, campo y potencial, corners y Monte Carlo reproducible.' : '1D PN junction with deterministic educational solver, I–V curves, field and potential, corners and reproducible Monte Carlo.'}</p></div>

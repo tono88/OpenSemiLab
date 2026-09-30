@@ -70,6 +70,34 @@ def test_email_verification_loop_gates_login():
     assert ok.status_code == 200
 
 
+def test_edu_general_accepts_and_rejects():
+    from opensemilab_api.auth import is_allowed_email
+
+    for email in (
+        "a@harvard.edu",
+        "a@unis.edu.gt",
+        "a@itesm.edu.mx",
+        "a@uca.edu.sv",
+        "a@uni.edu.co",
+        "  MAYUS@UNI.EDU.MX  ",
+    ):
+        assert is_allowed_email(email) is True, email
+    for email in (
+        "a@gmail.com",
+        "a@unis.edu.gt.fake.com",
+        "a@edu.fake.com",
+        "a@universidad.com",
+    ):
+        assert is_allowed_email(email) is False, email
+
+    bad = client.post(
+        "/api/v1/auth/register",
+        json={"email": "x@gmail.com", "name": "X", "password": "Secreto123"},
+    )
+    assert bad.status_code == 403
+    assert ".edu" in bad.json()["detail"]
+
+
 def test_login_lockout_escalates():
     email = "bloqueado@unis.edu.gt"
     for _ in range(5):
