@@ -4,7 +4,7 @@
 
 OpenSemiLab presents one coherent workflow on top of open scientific engines. A learner can explore a PN junction visually; an advanced user can inspect the same experiment's geometry, mesh, equations, solver controls, raw data, and provenance.
 
-> Status: foundation release. The PN-junction vertical slice is usable end to end with a deterministic educational solver. A DEVSIM adapter boundary is included for the next integration step.
+> Status: foundation release. The PN-junction vertical slice includes both the deterministic educational solver and an optional DEVSIM companion that executes on the user's computer.
 
 The Design Studio executes **real RTL lint, simulation, synthesis, batch SPICE simulation, and asynchronous RTL-to-GDSII implementation** inside an isolated IIC-OSIC-TOOLS worker. Projects persist in the browser as multi-file workspaces and can be exported or imported. RF/EM and mixed-signal co-simulation remain staged integrations and are visibly marked as such.
 
@@ -45,16 +45,18 @@ Open-source EDA and multiphysics tools are powerful, but they expose different i
 - Run reproducible educational parameter corners and a 20-sample Monte Carlo study with mean and min–max envelopes.
 - Switch between five depth modes without changing the underlying experiment.
 - Query engine capabilities and export a self-describing simulation result.
-- Select `devsim` explicitly; the API returns a clear capability error until the optional engine is installed.
+- Select `devsim` in Advanced/Research mode; the browser detects a local companion automatically and keeps the compute load off the shared server.
+- Validate the DEVSIM result on 51/101/201-node meshes and download a JSON reproducibility bundle with engine version, input hash, convergence settings, and validation evidence.
 
 ## Architecture
 
 ```mermaid
 flowchart TD
     UI["Progressive web interface"] --> API["FastAPI orchestration API"]
+    UI --> LOCAL["Local DEVSIM companion"]
     API --> MODEL["Shared experiment contract"]
     MODEL --> EDU["Educational solver"]
-    MODEL --> DEV["DEVSIM adapter"]
+    LOCAL --> DEV["DEVSIM 2.11"]
     MODEL --> FUTURE["MOOSE / FEniCSx / EDA adapters"]
     EDU --> RESULT["Common result + provenance"]
     DEV --> RESULT
@@ -125,11 +127,32 @@ npm install
 npm run dev
 ```
 
+### Local DEVSIM companion
+
+DEVSIM is intentionally installed and executed on the user's computer. The companion binds only to `127.0.0.1:8787`; the web app sends DEVSIM experiments directly to it, while educational runs continue through the shared API.
+
+The validation assumptions, canonical reference mapping, quantitative thresholds, and limitations are documented in [docs/devsim-validation.md](docs/devsim-validation.md).
+
+Linux/macOS:
+
+```bash
+./scripts/install-devsim-local.sh
+```
+
+Windows PowerShell:
+
+```powershell
+.\scripts\install-devsim-local.ps1
+```
+
+Then open Device Lab, choose Advanced or Research, select DEVSIM, and press **Detect again**. A deployed portal origin can be authorized with `OPENSEMILAB_ALLOWED_ORIGINS=https://your-portal.example` before starting the companion. Linux requires BLAS/LAPACK runtime libraries; the install script automatically selects the common versioned library names when present.
+
 ### Tests
 
 ```bash
 cd services/eda-worker && python -m unittest discover -s tests -v
 cd services/api && pytest
+cd services/devsim-worker && DEVSIM_MATH_LIBS=liblapack.so.3:libblas.so.3 pytest
 cd apps/web && npm run build
 ```
 
@@ -139,6 +162,7 @@ cd apps/web && npm run build
 apps/web/             Progressive React interface
 services/api/         FastAPI orchestration and simulation adapters
 services/eda-worker/  Constrained IIC-OSIC-TOOLS execution bridge
+services/devsim-worker/ Local Poisson/drift-diffusion companion
 docs/                 Architecture, pedagogy, licensing, roadmap
 examples/             Versioned experiment examples
 .github/workflows/    CI for API tests and web builds
@@ -153,7 +177,7 @@ The built-in solver is intentionally labeled **educational**. It produces transp
 1. Add live per-stage LibreLane progress and exact polygon rendering from GDSII.
 2. Extend nextpnr from iCE40 ASC output to board-specific bitstream packing/programming profiles.
 3. Normalize Xyce/CACE/openEMS numeric outputs into the animated chart schema and add curated Xschem round-trip templates.
-4. Execute a validated DEVSIM diode experiment and normalize its output.
+4. Extend DEVSIM validation from the PN baseline to calibrated reference measurements.
 5. Add optional server-side project storage and Git synchronization while retaining local JSON portability.
 6. Add MOS capacitor and MOSFET experiment templates.
 7. Integrate Gmsh, VTK, and electro-thermal adapters.

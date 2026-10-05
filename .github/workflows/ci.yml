@@ -29,3 +29,15 @@ jobs:
         with: { node-version: '22', cache: npm, cache-dependency-path: apps/web/package-lock.json }
       - run: npm install
       - run: npm run build
+  devsim-integration:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: services/devsim-worker } }
+    env:
+      DEVSIM_MATH_LIBS: liblapack.so.3:libblas.so.3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: sudo apt-get update && sudo apt-get install -y libblas3 liblapack3
+      - run: pip install -e '.[dev]'
+      - run: pytest -q

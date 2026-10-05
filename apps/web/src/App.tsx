@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { simulate } from './api'
+import './devsim.css'
+import { compareBundles, devsimHealth, simulate, validateDevsim } from './api'
 import { Plot } from './Plot'
 import DesignStudio from './DesignStudio'
-import type { Experiment, Mode, SimulationResult } from './types'
+import type { Experiment, Mode, SimulationResult, ValidationResult } from './types'
 import StudyComparison from './StudyComparison'
 import type { StudyRun } from './StudyComparison'
 
@@ -10,7 +11,7 @@ const MODES: Mode[] = ['Explore', 'Learn', 'Design', 'Advanced', 'Research']
 const defaults: Experiment = {
   name: 'Silicon PN junction', engine: 'educational',
   device: { kind: 'pn_junction_1d', material: 'silicon', length_um: 2, area_um2: 100, acceptor_cm3: 1e16, donor_cm3: 1e16, temperature_k: 300 },
-  sweep: { start_v: -1, stop_v: 0.8, points: 73 }, numerics: { mesh_points: 201, relative_tolerance: 1e-8, max_iterations: 80 },
+  sweep: { start_v: -0.5, stop_v: 0.7, points: 73 }, numerics: { mesh_points: 201, relative_tolerance: 1e-8, max_iterations: 80 },
 }
 
 function randomGenerator(seed:number) {
@@ -24,8 +25,16 @@ function gaussian(random:()=>number) {
 
 function boundedDoping(value:number) {return Math.max(1e12,Math.min(1e20,value))}
 
+function displayNumber(value:number) {
+  const magnitude=Math.abs(value)
+  return value!==0&&(magnitude>=1e6||magnitude<1e-3)?value.toExponential(4):String(value)
+}
+
 function NumberField({ label, value, unit, onChange, step = 'any' }: { label: string; value: number; unit: string; onChange: (n: number) => void; step?: string }) {
-  return <label className="field"><span>{label}</span><div><input type="number" value={value} step={step} onChange={e => onChange(Number(e.target.value))}/><b>{unit}</b></div></label>
+  const [draft,setDraft]=useState(displayNumber(value))
+  useEffect(()=>setDraft(displayNumber(value)),[value])
+  function commit(raw:string) { const parsed=Number(raw); if(Number.isFinite(parsed)){onChange(parsed);setDraft(displayNumber(parsed))} else setDraft(displayNumber(value)) }
+  return <label className="field"><span>{label}</span><div><input type="text" inputMode="decimal" value={draft} data-step={step} onChange={e=>setDraft(e.target.value)} onBlur={e=>commit(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')commit(e.currentTarget.value)}}/><b>{unit}</b></div></label>
 }
 
 function App() {
@@ -41,6 +50,10 @@ function App() {
   const [studyType,setStudyType]=useState<'corners'|'montecarlo'>('corners')
   const [studyRuns,setStudyRuns]=useState<StudyRun[]>([])
   const [error, setError] = useState('')
+  const [devsimOnline,setDevsimOnline]=useState(false)
+  const [validation,setValidation]=useState<ValidationResult|null>(null)
+  const [validating,setValidating]=useState(false)
+  const [comparison,setComparison]=useState<Record<string,unknown>|null>(null)
   const depth = MODES.indexOf(mode)
   const modeLabels: Record<Mode,string> = es
     ? {Explore:'Explorar',Learn:'Aprender',Design:'Diseñar',Advanced:'Avanzado',Research:'Investigación'}
@@ -48,10 +61,44 @@ function App() {
 
   function changeLocale(next:'es'|'en') { setLocale(next); localStorage.setItem('opensemilab.locale',next) }
 
+  async function refreshDevsim() { setDevsimOnline(await devsimHealth()) }
+
   async function run() {
     setRunning(true); setError('')
     try { setResult(await simulate(experiment)) } catch (e) { setError(e instanceof Error ? e.message : (es?'La simulación falló':'Simulation failed')) }
     finally { setRunning(false) }
+  }
+
+  async function validateLocal() {
+    setValidating(true);setError('')
+    try { const report=await validateDevsim(experiment);setValidation(report);setResult(report.result) }
+    catch(e) {setError(e instanceof Error?e.message:(es?'La validación falló':'Validation failed'))}
+    finally {setValidating(false)}
+  }
+
+  function downloadBundle() {
+    if(!validation)return
+    const blob=new Blob([JSON.stringify(validation.bundle,null,2)],{type:'application/json'})
+    const url=URL.createObjectURL(blob);const link=document.createElement('a')
+    link.href=url;link.download=`opensemilab-devsim-${validation.bundle.bundle_sha256.slice(0,12)}.json`;link.click();URL.revokeObjectURL(url)
+  }
+
+  function downloadCsv() {
+    if(!result)return
+    const series=result.series.find(item=>item.name===activePlot)
+    if(!series)return
+    const rows:(string|number)[][]=[[`${series.x_label} (${series.x_unit})`,`${series.y_label} (${series.y_unit})`],...series.x.map((x,index)=>[x,series.y[index]])]
+    const csv=rows.map(row=>row.map(value=>`"${String(value).replaceAll('"','""')}"`).join(',')).join('\n')
+    const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});const url=URL.createObjectURL(blob);const link=document.createElement('a')
+    link.href=url;link.download=`${activePlot}.csv`;link.click();URL.revokeObjectURL(url)
+  }
+
+  async function importAndCompare(file:File) {
+    if(!validation){setError(es?'Primero ejecute la validación actual.':'Run the current validation first.');return}
+    try {
+      const imported=JSON.parse(await file.text()) as Record<string,unknown>
+      setComparison(await compareBundles(imported,validation.bundle))
+    } catch(e) {setError(e instanceof Error?e.message:(es?'Paquete inválido':'Invalid bundle'))}
   }
 
   async function runStudy(type:'corners'|'montecarlo') {
@@ -76,7 +123,7 @@ function App() {
     } catch(reason) {setError(reason instanceof Error?reason.message:(es?'El estudio falló':'Study failed'))}
     finally {setStudyRunning('')}
   }
-  useEffect(() => { void run() }, [])
+  useEffect(() => { void run(); void refreshDevsim() }, [])
   const selected = useMemo(() => result?.series.find(s => s.name === activePlot), [result, activePlot])
   const device = experiment.device
   const updateDevice = (patch: Partial<Experiment['device']>) => setExperiment(e => ({ ...e, device: { ...e.device, ...patch } }))
@@ -102,8 +149,10 @@ function App() {
             {depth >= 2 && <NumberField label={es?'Área de la unión':'Junction area'} value={device.area_um2} unit="µm²" onChange={area_um2 => updateDevice({ area_um2 })}/>}
             {depth >= 3 && <NumberField label={es?'Puntos de malla':'Mesh points'} value={experiment.numerics.mesh_points} unit={es?'nodos':'nodes'} step="1" onChange={mesh_points => setExperiment(e => ({...e, numerics: {...e.numerics, mesh_points}}))}/>}
           </div>
-          {depth >= 3 && <div className="engine-select"><label>{es?'Motor de cálculo':'Calculation engine'}<select value={experiment.engine} onChange={e => setExperiment(x => ({...x, engine: e.target.value as Experiment['engine']}))}><option value="educational">{es?'Aproximación educativa':'Educational approximation'}</option><option value="devsim">DEVSIM ({es?'integración pendiente':'integration pending'})</option></select></label></div>}
+          {depth >= 3 && <div className="engine-select"><label>{es?'Motor de cálculo':'Calculation engine'}<select value={experiment.engine} onChange={e => setExperiment(x => ({...x, engine: e.target.value as Experiment['engine']}))}><option value="educational">{es?'Aproximación educativa':'Educational approximation'}</option><option value="devsim">DEVSIM ({devsimOnline?(es?'local conectado':'local connected'):(es?'requiere instalación local':'local install required')})</option></select></label></div>}
+          {depth>=3&&experiment.engine==='devsim'&&!devsimOnline&&<div className="devsim-setup"><b>{es?'Conecte DEVSIM en este equipo':'Connect DEVSIM on this computer'}</b><p>{es?'Los cálculos se ejecutan localmente; sólo los resultados llegan al navegador.':'Calculations run locally; only results reach the browser.'}</p><code>python -m pip install ./services/devsim-worker</code><code>opensemilab-devsim</code><button onClick={refreshDevsim}>{es?'Volver a detectar':'Detect again'}</button></div>}
           <button className="run" onClick={run} disabled={running}>{running ? (es?'Resolviendo…':'Solving…') : (es?'Ejecutar experimento':'Run experiment')} <span>→</span></button>
+          {depth>=4&&experiment.engine==='devsim'&&devsimOnline&&<button className="validate" onClick={validateLocal} disabled={validating}>{validating?(es?'Validando 3 mallas…':'Validating 3 meshes…'):(es?'Validar DEVSIM (51 / 101 / 201)':'Validate DEVSIM (51 / 101 / 201)')}</button>}
           {error && <p className="error">{error}</p>}
         </aside>
 
@@ -118,6 +167,8 @@ function App() {
       </section>
 
       {studyRuns.length>0&&<StudyComparison runs={studyRuns} type={studyType} seriesName={activePlot} locale={locale}/>}
+
+      {depth>=4&&validation&&<section className="validation-report"><div><p className="eyebrow">DEVSIM / VALIDATION</p><h2>{validation.passed?(es?'Validación aprobada':'Validation passed'):(es?'Validación requiere atención':'Validation needs attention')}</h2></div><div>{validation.checks.map(check=><p key={check.id} className={check.passed?'pass':'fail'}><b>{check.passed?'✓':'×'} {check.label}</b><span>{check.value.toExponential(3)} / {check.limit.toExponential(1)}</span></p>)}<div className="bundle-actions"><button onClick={downloadBundle}>{es?'Descargar JSON':'Download JSON'}</button><button onClick={downloadCsv}>{es?'Descargar CSV visible':'Download plotted CSV'}</button><label>{es?'Importar y comparar':'Import and compare'}<input type="file" accept="application/json,.json" onChange={event=>{const file=event.target.files?.[0];if(file)void importAndCompare(file)}}/></label></div>{comparison&&<pre>{JSON.stringify(comparison,null,2)}</pre>}</div></section>}
 
       {depth >= 3 && result && <section className="technical"><div><p className="eyebrow">{es?'TRANSPARENCIA DEL MODELO':'MODEL TRANSPARENCY'}</p><h2>{es?'Nada importante permanece oculto.':'Nothing important is hidden.'}</h2></div><dl><div><dt>{es?'Modelo':'Model'}</dt><dd>{result.provenance.model}</dd></div><div><dt>{es?'Autoridad':'Authority'}</dt><dd>{result.provenance.authoritative ? (es?'Motor validado':'Validated engine') : (es?'Educativo — no apto para sign-off':'Educational — not sign-off')}</dd></div><div><dt>{es?'Huella de entrada':'Input fingerprint'}</dt><dd className="mono">{result.provenance.input_sha256.slice(0, 20)}…</dd></div></dl></section>}
       {depth >= 4 && <section className="raw"><div><p className="eyebrow">{es?'MANIFIESTO REPRODUCIBLE':'REPRODUCIBLE MANIFEST'}</p><h2>{es?'Entrada exacta del experimento':'Exact experiment input'}</h2></div><pre>{JSON.stringify(experiment, null, 2)}</pre></section>}

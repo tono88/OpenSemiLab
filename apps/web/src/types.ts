@@ -17,5 +17,16 @@ export interface SimulationResult {
   metrics: { label: string; value: number; unit: string }[]
   series: Series[]
   explanations: string[]; warnings: string[]; converged: boolean
-  provenance: { engine: string; engine_version: string; model: string; input_sha256: string; authoritative: boolean }
+  provenance: {
+    engine: string; engine_version: string; model: string; input_sha256: string; authoritative: boolean
+    execution_host?: string; mesh_points?: number; relative_tolerance?: number; iterations?: number
+  }
+}
+
+export interface ValidationCheck { id: string; label: string; value: number; limit: number; passed: boolean }
+export interface ValidationResult {
+  passed: boolean
+  checks: ValidationCheck[]
+  result: SimulationResult
+  bundle: Record<string, unknown> & { bundle_sha256: string }
 }

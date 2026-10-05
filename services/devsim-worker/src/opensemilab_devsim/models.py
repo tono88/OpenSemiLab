@@ -1,12 +1,6 @@
-from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
-
-
-class EngineName(StrEnum):
-    EDUCATIONAL = "educational"
-    DEVSIM = "devsim"
 
 
 class DeviceSpec(BaseModel):
@@ -39,49 +33,23 @@ class NumericsSpec(BaseModel):
 
 class Experiment(BaseModel):
     name: str = Field("Silicon PN junction", min_length=1, max_length=120)
-    engine: EngineName = EngineName.EDUCATIONAL
+    engine: Literal["devsim"] = "devsim"
     device: DeviceSpec = Field(default_factory=DeviceSpec)
     sweep: SweepSpec = Field(default_factory=SweepSpec)
     numerics: NumericsSpec = Field(default_factory=NumericsSpec)
 
 
-class Series(BaseModel):
-    name: str
-    x_label: str
-    x_unit: str
-    y_label: str
-    y_unit: str
-    x: list[float]
-    y: list[float]
+class ValidationRequest(BaseModel):
+    experiment: Experiment
+    mesh_points: list[int] = Field(default_factory=lambda: [51, 101, 201], min_length=3, max_length=5)
+
+    @model_validator(mode="after")
+    def ordered_meshes(self):
+        if self.mesh_points != sorted(set(self.mesh_points)) or any(n < 21 or n > 1001 for n in self.mesh_points):
+            raise ValueError("mesh_points must be unique, ascending values between 21 and 1001")
+        return self
 
 
-class Metric(BaseModel):
-    label: str
-    value: float
-    unit: str
-
-
-class Provenance(BaseModel):
-    engine: str
-    engine_version: str
-    model: str
-    input_sha256: str
-    authoritative: bool
-
-
-class SimulationResult(BaseModel):
-    experiment_name: str
-    metrics: list[Metric]
-    series: list[Series]
-    explanations: list[str]
-    warnings: list[str]
-    converged: bool
-    provenance: Provenance
-
-
-class EngineCapability(BaseModel):
-    id: str
-    label: str
-    available: bool
-    fidelity: Literal["educational", "professional"]
-    description: str
+class CompareRequest(BaseModel):
+    left: dict
+    right: dict
