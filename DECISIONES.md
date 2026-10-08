@@ -10,6 +10,7 @@
 5. **Bloqueo escalado en login** (por IP+correo, en memoria): 5 fallos→10 min, 8→30 min, 12→1 h, 16+→12 h. Login bueno resetea. Registro/reenvío: ventana simple 8/5 min.
 6. **SMTP real**: `info@tecnodyne.com` (Gmail + contraseña de aplicación del profe), configurable solo por portal `#/admin` (guardada cifrada, jamás se expone por API). Verificado envío real el 2026-10-08.
 14. **Links jamás se pierden**: si el SMTP está desactivado o el envío falla, el link de verificación/recuperación queda en el log del servidor (`auth.py`, respuesta `email_sent`: True=enviado, False=falló, None=apagado). El mensaje de "Recuperar contraseña" es neutro (sin mencionar logs) y la respuesta es indistinguible exista o no el correo.
+15. **Sesión cifrada + salida garantizada**: el token viaja cifrado con Fernet (ya no es un JWT legible; firmas previas se aceptan hasta su expiración). Logout borra la cookie con los mismos atributos del set (apto HTTPS) y el front espera al servidor antes de limpiar estado. Botón Salir también dentro del Lab.
 
 ## Datos
 7. **Postgres oficial** (PG18 local de André; LAB después). SQLite solo fallback dev/test. Volumen `pgdata` en compose. Tablas: `users`, `projects`, `design_events`, `password_resets`, `email_verifications`, `access_requests`.

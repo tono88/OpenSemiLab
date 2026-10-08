@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import './devsim.css'
+import { useAuth } from './auth'
 import { compareBundles, devsimHealth, simulate, validateDevsim } from './api'
 import { Plot } from './Plot'
 import DesignStudio from './DesignStudio'
@@ -39,6 +40,7 @@ function NumberField({ label, value, unit, onChange, step = 'any' }: { label: st
 
 function App() {
   const [locale, setLocale] = useState<'es'|'en'>(() => localStorage.getItem('opensemilab.locale') === 'en' ? 'en' : 'es')
+  const { logout } = useAuth()
   const es=locale==='es'
   const [area, setArea] = useState<'design' | 'lab'>('design')
   const [mode, setMode] = useState<Mode>('Explore')
@@ -129,7 +131,7 @@ function App() {
   const updateDevice = (patch: Partial<Experiment['device']>) => setExperiment(e => ({ ...e, device: { ...e.device, ...patch } }))
 
   return <div className="app-shell">
-    <header><div className="brand"><div className="mark">OS</div><div><strong>OpenSemiLab</strong><small>{es?'Laboratorio de semiconductores':'Semiconductor laboratory'}</small></div></div><nav className="primary-nav"><button className={area==='design'?'active':''} onClick={()=>setArea('design')}>{es?'Estudio de diseño':'Design Studio'}</button><button className={area==='lab'?'active':''} onClick={()=>setArea('lab')}>{es?'Laboratorio de dispositivos':'Device Lab'}</button></nav><div className="header-tools"><div className="locale-switch" aria-label={es?'Idioma':'Language'}><button className={locale==='es'?'active':''} onClick={()=>changeLocale('es')}>ES</button><button className={locale==='en'?'active':''} onClick={()=>changeLocale('en')}>EN</button></div><div className="engine"><i/> {es?'Entorno local':'Local workspace'} <span>v0.2</span></div></div></header>
+    <header><div className="brand"><div className="mark">OS</div><div><strong>OpenSemiLab</strong><small>{es?'Laboratorio de semiconductores':'Semiconductor laboratory'}</small></div></div><nav className="primary-nav"><button className={area==='design'?'active':''} onClick={()=>setArea('design')}>{es?'Estudio de diseño':'Design Studio'}</button><button className={area==='lab'?'active':''} onClick={()=>setArea('lab')}>{es?'Laboratorio de dispositivos':'Device Lab'}</button></nav><div className="header-tools"><div className="locale-switch" aria-label={es?'Idioma':'Language'}><button className={locale==='es'?'active':''} onClick={()=>changeLocale('es')}>ES</button><button className={locale==='en'?'active':''} onClick={()=>changeLocale('en')}>EN</button></div><button onClick={()=>void logout()} title={es?'Cerrar sesión':'Sign out'}>{es?'Salir':'Sign out'}</button><div className="engine"><i/> {es?'Entorno local':'Local workspace'} <span>v0.2</span></div></div></header>
     {area === 'lab' ? <><nav className="modes" aria-label="Interface depth">
       {MODES.map((item, i) => <button className={mode === item ? 'active' : ''} onClick={() => setMode(item)} key={item}><em>0{i + 1}</em>{modeLabels[item]}</button>)}
     </nav>

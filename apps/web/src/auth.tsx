@@ -59,8 +59,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return data
   }, [refresh])
 
-  const logout = useCallback(() => {
-    void apiFetch('/api/v1/auth/logout', { method: 'POST' }).catch(() => {})
+  const logout = useCallback(async () => {
+    try { await apiFetch('/api/v1/auth/logout', { method: 'POST' }) } catch { /* sesión ya inválida */ }
     setUser(null)
     location.hash = '#/'
   }, [])

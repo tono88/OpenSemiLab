@@ -124,6 +124,31 @@ def test_verify_link_logged_when_smtp_fails(monkeypatch, caplog):
     db.close()
 
 
+def test_session_token_is_encrypted_and_legacy_still_accepted():
+    from datetime import datetime as _dt, timedelta as _td
+    from types import SimpleNamespace
+
+    import jwt as _pyjwt
+    from opensemilab_api.auth import JWT_EXPIRE_MIN as _exp, JWT_SECRET as _secret, _issue_token
+    from opensemilab_api.db import SessionLocal as SL
+    from opensemilab_api.models_db import User as _User
+
+    db = SL()
+    qa = db.query(_User).filter_by(email="qa@unis.edu.gt").first()
+    me = SimpleNamespace(id=qa.id, email=qa.email, role=qa.role)
+    db.close()
+    enc = _issue_token(me)
+    assert enc.count(".") != 2  # ya no viaja como JWT legible
+    r = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {enc}"})
+    assert r.status_code == 200
+    legacy = _pyjwt.encode(
+        {"sub": qa.id, "email": qa.email, "role": qa.role, "exp": _dt.utcnow() + _td(minutes=_exp)},
+        _secret, algorithm="HS256",
+    )
+    r2 = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {legacy}"})
+    assert r2.status_code == 200
+
+
 def test_login_lockout_escalates():
     email = "bloqueado@unis.edu.gt"
     for _ in range(5):

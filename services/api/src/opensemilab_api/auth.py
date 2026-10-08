@@ -8,6 +8,7 @@ Recuperación: token de un solo uso; en dev se devuelve/loguea,
 en LAB se manda por SMTP (pendiente Fase C).
 """
 
+import base64
 import hashlib
 import logging
 import os
@@ -16,6 +17,7 @@ import secrets
 from datetime import datetime, timedelta
 
 import jwt
+from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr, Field
@@ -152,6 +154,15 @@ def _new_verify_token(db: Session, user: User) -> tuple[str, bool | None]:
     return raw, sent
 
 
+def _token_cipher() -> Fernet:
+    # El token de sesión viaja cifrado (Fernet), no solo firmado: su contenido
+    # (id, correo, rol) no es legible sin el secreto del servidor.
+    # Misma derivación que smtp_service para no multiplicar secretos.
+    source = os.getenv("OPENSEMILAB_SETTINGS_KEY") or JWT_SECRET
+    key = base64.urlsafe_b64encode(hashlib.sha256(source.encode()).digest())
+    return Fernet(key)
+
+
 def _issue_token(user: User) -> str:
     payload = {
         "sub": user.id,
@@ -159,7 +170,17 @@ def _issue_token(user: User) -> str:
         "role": user.role,
         "exp": datetime.utcnow() + timedelta(minutes=JWT_EXPIRE_MIN),
     }
-    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+    raw = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+    return _token_cipher().encrypt(raw.encode()).decode()
+
+
+def _decode_token(token: str) -> dict:
+    raw = token
+    try:
+        raw = _token_cipher().decrypt(token.encode()).decode()
+    except InvalidToken:
+        pass  # compatibilidad: sesiones emitidas antes del cifrado (mueren con su expiración)
+    return jwt.decode(raw, JWT_SECRET, algorithms=["HS256"])
 
 
 def get_current_user(
@@ -172,7 +193,7 @@ def get_current_user(
     if not token:
         raise HTTPException(status_code=401, detail="Falta sesión (login requerido)")
     try:
-        data = jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        data = _decode_token(token)
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Sesión inválida o vencida") from None
     user = db.get(User, data.get("sub", ""))
@@ -266,7 +287,8 @@ def login(
 
 @router.post("/logout")
 def logout(response: Response) -> dict:
-    response.delete_cookie(SESSION_COOKIE, path="/")
+    # Mismos atributos del set: si no coinciden, el navegador conserva la cookie (caso HTTPS).
+    response.delete_cookie(SESSION_COOKIE, path="/", samesite="lax", secure=_COOKIE_SECURE, httponly=True)
     return {"ok": True}
 
 
