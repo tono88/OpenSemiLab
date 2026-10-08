@@ -9,6 +9,7 @@ dist/
 *.tsbuildinfo
 coverage/
 *.log
+opensemilab-dev.db
 .idea/
 .vscode/
 private-pdks/

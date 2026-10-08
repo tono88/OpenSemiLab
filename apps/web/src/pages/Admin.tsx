@@ -6,6 +6,7 @@ type Stats = { users: number; verified: number; admins: number; projects: number
 type AdminUser = { id: string; email: string; name: string; role: string; is_active: boolean; is_verified: boolean; created_at: string }
 type AdminProject = { id: string; owner_email: string; name: string; updated_at: string }
 type AdminEvent = { id: string; user_email: string; project_id: string; tool: string; action: string; created_at: string }
+type SmtpSettings = { enabled: boolean; host: string; port: number; encryption: 'none' | 'starttls' | 'ssl'; username: string; from_email: string; from_name: string; has_password: boolean; updated_by: string; updated_at: string }
 
 async function get<T>(path: string): Promise<T> {
   const res = await apiFetch(path)
@@ -31,17 +32,22 @@ export function Admin() {
   const [events, setEvents] = useState<AdminEvent[]>([])
   const [tool, setTool] = useState('')
   const [error, setError] = useState('')
+  const [smtp, setSmtp] = useState<SmtpSettings | null>(null)
+  const [smtpPassword, setSmtpPassword] = useState('')
+  const [smtpMessage, setSmtpMessage] = useState('')
+  const [smtpBusy, setSmtpBusy] = useState(false)
 
   async function load() {
     setError('')
     try {
-      const [s, u, p, e] = await Promise.all([
+      const [s, u, p, e, mail] = await Promise.all([
         get<Stats>('/api/v1/admin/stats'),
         get<AdminUser[]>('/api/v1/admin/users'),
         get<AdminProject[]>('/api/v1/admin/projects'),
         get<AdminEvent[]>(`/api/v1/admin/events?limit=200${tool ? `&tool=${encodeURIComponent(tool)}` : ''}`),
+        get<SmtpSettings>('/api/v1/admin/smtp'),
       ])
-      setStats(s); setUsers(u); setProjects(p); setEvents(e)
+      setStats(s); setUsers(u); setProjects(p); setEvents(e); setSmtp(mail)
     } catch { setError(es ? 'No se pudo cargar (¿eres admin?)' : 'Could not load (admin only)') }
   }
   useEffect(() => { void load() }, [])
@@ -57,6 +63,34 @@ export function Admin() {
     void load()
   }
 
+  async function saveSmtp(e: React.FormEvent) {
+    e.preventDefault()
+    if (!smtp) return
+    setSmtpBusy(true); setSmtpMessage('')
+    try {
+      const res = await apiFetch('/api/v1/admin/smtp', {
+        method: 'PUT',
+        body: JSON.stringify({ ...smtp, password: smtpPassword || null }),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`)
+      setSmtp(body); setSmtpPassword('')
+      setSmtpMessage(es ? 'Configuración guardada.' : 'Settings saved.')
+    } catch (err) { setSmtpMessage(err instanceof Error ? err.message : 'Error') }
+    finally { setSmtpBusy(false) }
+  }
+
+  async function testSmtp() {
+    setSmtpBusy(true); setSmtpMessage('')
+    try {
+      const res = await apiFetch('/api/v1/admin/smtp/test', { method: 'POST', body: JSON.stringify({}) })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`)
+      setSmtpMessage(es ? `Correo de prueba enviado a ${body.recipient}.` : `Test email sent to ${body.recipient}.`)
+    } catch (err) { setSmtpMessage(err instanceof Error ? err.message : 'Error') }
+    finally { setSmtpBusy(false) }
+  }
+
   return <PublicShell>
     <section className="pub-hero slim">
       <p className="eyebrow">ADMIN · UNIS LAB</p>
@@ -68,6 +102,22 @@ export function Admin() {
       <div><h3>{stats.projects}</h3><p>{es ? 'proyectos' : 'projects'}</p></div>
       <div><h3>{stats.events}</h3><p>{es ? 'eventos de diseño' : 'design events'}</p></div>
       <div><h3>{Object.entries(stats.by_tool).sort((a, b) => b[1] - a[1])[0]?.[0] ?? '—'}</h3><p>{es ? 'herramienta top' : 'top tool'}</p></div>
+    </section>}
+    {smtp && <section className="admin-block smtp-block">
+      <div className="admin-head"><div><h2>{es ? 'Servidor de correo saliente' : 'Outgoing mail server'}</h2><p>{es ? 'Sólo los administradores pueden consultar o modificar esta configuración.' : 'Only administrators can view or modify these settings.'}</p></div><span className={smtp.enabled ? 'smtp-status on' : 'smtp-status'}>{smtp.enabled ? (es ? 'ACTIVO' : 'ENABLED') : (es ? 'INACTIVO' : 'DISABLED')}</span></div>
+      <form className="smtp-form" onSubmit={saveSmtp}>
+        <label className="smtp-check"><input type="checkbox" checked={smtp.enabled} onChange={e => setSmtp({ ...smtp, enabled: e.target.checked })} />{es ? 'Activar envío SMTP' : 'Enable SMTP delivery'}</label>
+        <label>{es ? 'Nombre' : 'Name'}<input value={smtp.from_name} onChange={e => setSmtp({ ...smtp, from_name: e.target.value })} placeholder="OpenSemiLab" /></label>
+        <label>{es ? 'Remitente' : 'From email'}<input type="email" value={smtp.from_email} onChange={e => setSmtp({ ...smtp, from_email: e.target.value })} placeholder="info@tecnodyne.com" /></label>
+        <label>{es ? 'Servidor SMTP' : 'SMTP server'}<input value={smtp.host} onChange={e => setSmtp({ ...smtp, host: e.target.value })} placeholder="smtp.gmail.com" /></label>
+        <label>{es ? 'Puerto SMTP' : 'SMTP port'}<input type="number" min="1" max="65535" value={smtp.port} onChange={e => setSmtp({ ...smtp, port: Number(e.target.value) })} /></label>
+        <label>{es ? 'Cifrado' : 'Encryption'}<select value={smtp.encryption} onChange={e => setSmtp({ ...smtp, encryption: e.target.value as SmtpSettings['encryption'] })}><option value="starttls">TLS (STARTTLS)</option><option value="ssl">SSL/TLS</option><option value="none">{es ? 'Ninguno' : 'None'}</option></select></label>
+        <label>{es ? 'Nombre de usuario' : 'Username'}<input value={smtp.username} onChange={e => setSmtp({ ...smtp, username: e.target.value })} placeholder="info@tecnodyne.com" /></label>
+        <label>{es ? 'Contraseña o clave de aplicación' : 'Password or app password'}<input type="password" value={smtpPassword} onChange={e => setSmtpPassword(e.target.value)} placeholder={smtp.has_password ? (es ? 'Guardada; deje vacío para conservarla' : 'Saved; leave empty to keep it') : ''} /></label>
+        <div className="smtp-actions"><button className="btn-primary" disabled={smtpBusy}>{smtpBusy ? '…' : (es ? 'Guardar configuración' : 'Save settings')}</button><button className="btn-ghost" type="button" disabled={smtpBusy} onClick={() => void testSmtp()}>{es ? 'Probar conexión y envío' : 'Test connection and delivery'}</button></div>
+        {smtpMessage && <p className="smtp-message">{smtpMessage}</p>}
+        {smtp.updated_by && <small>{es ? 'Último cambio' : 'Last change'}: {smtp.updated_by} · {smtp.updated_at.slice(0, 16).replace('T', ' ')}</small>}
+      </form>
     </section>}
     <section className="admin-block">
       <h2>{es ? 'Usuarios' : 'Users'}</h2>

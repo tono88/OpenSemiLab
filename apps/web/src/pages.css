@@ -62,6 +62,7 @@
 .admin-row{display:flex;gap:14px;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #ffffff10;font-size:13px;flex-wrap:wrap}
 .admin-row:last-child{border-bottom:0}
 .admin-row small{color:#78978b;font:11px 'DM Mono',monospace}
+.smtp-block{border:1px solid #ffffff18;padding:22px}.smtp-block .admin-head p{margin:5px 0 0;color:#78978b;font-size:12px}.smtp-status{border:1px solid #ffffff2a;color:#78978b;padding:7px 10px;font:10px 'DM Mono',monospace}.smtp-status.on{border-color:#45e6a6;color:#45e6a6}.smtp-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px;margin-top:20px}.smtp-form label{display:grid;gap:7px;color:#78978b;font:10px 'DM Mono',monospace;letter-spacing:.08em}.smtp-form input,.smtp-form select{background:#0b1b16;border:1px solid #ffffff22;color:#e9fff7;padding:11px 12px;font:13px system-ui;letter-spacing:normal}.smtp-form .smtp-check{grid-column:1/-1;display:flex;align-items:center;gap:9px;color:#dcebe5}.smtp-form .smtp-check input{width:auto}.smtp-actions,.smtp-message,.smtp-form>small{grid-column:1/-1}.smtp-actions{display:flex;gap:10px;flex-wrap:wrap}.smtp-message{margin:0;color:#45e6a6;font-size:13px}.smtp-form>small{color:#78978b}
 @media(max-width:700px){.team-card{grid-template-columns:80px 1fr}.team-card>img{width:80px;height:80px}}
 @media(max-width:860px){
 .pub-top{height:auto;padding:14px 5vw;flex-wrap:wrap;gap:10px}
@@ -70,4 +71,5 @@
 .pub-cta-row{flex-direction:column}
 .pub-cta-row .btn-primary,.pub-cta-row .btn-ghost{width:100%;text-align:center}
 .pub-main+footer,.pub footer{flex-direction:column;gap:8px}
+.smtp-form{grid-template-columns:1fr}
 }

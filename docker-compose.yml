@@ -25,6 +25,9 @@ services:
       OPENSEMILAB_PDK_ROOT: /var/lib/opensemilab-pdks
       DATABASE_URL: postgresql+psycopg://opensemilab:${POSTGRES_PASSWORD:-opensemilab-dev}@db:5432/opensemilab
       JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      OPENSEMILAB_SETTINGS_KEY: ${OPENSEMILAB_SETTINGS_KEY:-}
+      OPENSEMILAB_PUBLIC_URL: ${OPENSEMILAB_PUBLIC_URL:-http://localhost:5173}
+      OPENSEMILAB_COOKIE_SECURE: ${OPENSEMILAB_COOKIE_SECURE:-0}
       JWT_EXPIRE_MIN: "720"
     volumes:
       - opensemilab-pdks:/var/lib/opensemilab-pdks

@@ -183,6 +183,53 @@ def test_admin_gates_and_powers():
     assert client.get("/api/v1/projects").json() == []
 
 
+def test_smtp_settings_are_admin_only_and_secret_is_not_returned():
+    from fastapi.testclient import TestClient as TC
+
+    from opensemilab_api.db import SessionLocal as SL
+    from opensemilab_api.main import app as _app
+    from opensemilab_api.models_db import SmtpSettings as _SmtpSettings
+    from opensemilab_api.models_db import User as _User
+
+    anonymous = TC(_app)
+    assert anonymous.get("/api/v1/admin/smtp").status_code == 401
+
+    db = SL()
+    qa = db.query(_User).filter_by(email="qa@unis.edu.gt").first()
+    qa.role = "admin"
+    db.commit()
+    client.headers.update({"Authorization": f"Bearer {_issue_token(qa)}"})
+    db.close()
+
+    saved = client.put(
+        "/api/v1/admin/smtp",
+        json={
+            "enabled": True,
+            "host": "smtp.example.test",
+            "port": 465,
+            "encryption": "ssl",
+            "username": "mailer@example.com",
+            "password": "app-secret-123",
+            "from_email": "mailer@example.com",
+            "from_name": "OpenSemiLab",
+        },
+    )
+    assert saved.status_code == 200
+    assert saved.json()["has_password"] is True
+    assert "password" not in saved.json()
+
+    db = SL()
+    record = db.get(_SmtpSettings, "default")
+    assert record.password_encrypted != "app-secret-123"
+    db.close()
+
+    with patch("opensemilab_api.admin.send_email") as sender:
+        tested = client.post("/api/v1/admin/smtp/test", json={})
+    assert tested.status_code == 200
+    assert tested.json()["recipient"] == "qa@unis.edu.gt"
+    sender.assert_called_once()
+
+
 def test_user_cannot_touch_others_project():
     from opensemilab_api.auth import _hash_pw as _h, _issue_token as _t
     from opensemilab_api.db import SessionLocal as SL

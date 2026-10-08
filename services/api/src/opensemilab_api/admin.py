@@ -10,13 +10,17 @@
 """
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+import smtplib
+from typing import Literal
+
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from opensemilab_api.auth import require_admin
 from opensemilab_api.db import get_db
-from opensemilab_api.models_db import DesignEvent, Project, User
+from opensemilab_api.models_db import DesignEvent, Project, SmtpSettings, User
+from opensemilab_api.smtp_service import encrypt_password, get_settings, send_email, smtp_public
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
@@ -24,6 +28,22 @@ router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 class UserPatch(BaseModel):
     is_active: bool | None = None
     role: str | None = None
+
+
+class SmtpSettingsIn(BaseModel):
+    enabled: bool = False
+    host: str = Field(default="", max_length=255)
+    port: int = Field(default=587, ge=1, le=65535)
+    encryption: str = "starttls"
+    username: str = Field(default="", max_length=320)
+    password: str | None = Field(default=None, max_length=512)
+    clear_password: bool = False
+    from_email: EmailStr | Literal[""] = ""
+    from_name: str = Field(default="OpenSemiLab", max_length=160)
+
+
+class SmtpTestIn(BaseModel):
+    recipient: EmailStr | None = None
 
 
 def _user_out(user: User) -> dict:
@@ -132,3 +152,65 @@ def stats(db: Session = Depends(get_db), _admin: User = Depends(require_admin)) 
         "by_tool": by_tool,
         "by_action": by_action,
     }
+
+
+@router.get("/smtp")
+def read_smtp(db: Session = Depends(get_db), _admin: User = Depends(require_admin)) -> dict:
+    return smtp_public(get_settings(db))
+
+
+@router.put("/smtp")
+def update_smtp(
+    body: SmtpSettingsIn,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> dict:
+    if body.encryption not in ("none", "starttls", "ssl"):
+        raise HTTPException(status_code=422, detail="Cifrado SMTP invalido")
+    if body.enabled and (not body.host.strip() or not body.from_email):
+        raise HTTPException(status_code=422, detail="Servidor y remitente son obligatorios al activar SMTP")
+    settings = get_settings(db)
+    if settings is None:
+        settings = SmtpSettings(key="default")
+        db.add(settings)
+    settings.enabled = body.enabled
+    settings.host = body.host.strip()
+    settings.port = body.port
+    settings.encryption = body.encryption
+    settings.username = body.username.strip()
+    settings.from_email = str(body.from_email)
+    settings.from_name = body.from_name.strip()
+    settings.updated_by = admin.email
+    if body.clear_password:
+        settings.password_encrypted = ""
+    elif body.password:
+        settings.password_encrypted = encrypt_password(body.password)
+    db.commit()
+    db.refresh(settings)
+    return smtp_public(settings)
+
+
+@router.post("/smtp/test")
+def test_smtp(
+    body: SmtpTestIn,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> dict:
+    settings = get_settings(db)
+    if settings is None:
+        raise HTTPException(status_code=422, detail="Guarda primero la configuracion SMTP")
+    recipient = str(body.recipient or admin.email)
+    try:
+        send_email(
+            settings,
+            recipient,
+            "Prueba SMTP de OpenSemiLab",
+            "La configuracion SMTP de OpenSemiLab funciona correctamente.\n",
+        )
+    except (OSError, RuntimeError, smtplib.SMTPException) as error:
+        # Nunca retornar credenciales ni el contenido cifrado.
+        raise HTTPException(
+            status_code=502,
+            detail=f"No se pudo enviar: {type(error).__name__}",
+        ) from error
+    return {"ok": True, "recipient": recipient}

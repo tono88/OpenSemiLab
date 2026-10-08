@@ -96,3 +96,30 @@ export function Forgot() {
     </form>}
   </Card></PublicShell>
 }
+
+export function ResetPassword() {
+  const [locale] = useLocale()
+  const es = locale === 'es'
+  const token = new URLSearchParams(location.hash.split('?')[1] || '').get('token') || ''
+  const [password, setPassword] = useState('')
+  const [confirm, setConfirm] = useState('')
+  const [done, setDone] = useState(false)
+  const [error, setError] = useState('')
+  async function submit(e: React.FormEvent) {
+    e.preventDefault(); setError('')
+    if (password !== confirm) { setError(es ? 'Las contraseñas no coinciden' : 'Passwords do not match'); return }
+    try {
+      await authFetch('/api/v1/auth/reset', { method: 'POST', body: JSON.stringify({ token, new_password: password }) })
+      setDone(true)
+    } catch (err) { setError(err instanceof Error ? err.message : 'Request failed') }
+  }
+  return <PublicShell><Card title={es ? 'Nueva contraseña' : 'New password'}>
+    {done ? <><p>{es ? 'La contraseña fue actualizada.' : 'Your password was updated.'}</p><p className="auth-alt"><a href="#/login">{es ? 'Entrar' : 'Sign in'}</a></p></> : <form onSubmit={submit}>
+      {!token && <p className="error">{es ? 'El enlace no contiene un token válido.' : 'The link has no valid token.'}</p>}
+      <label>{es ? 'NUEVA CONTRASEÑA' : 'NEW PASSWORD'}<input type="password" required minLength={8} value={password} onChange={e => setPassword(e.target.value)} /></label>
+      <label>{es ? 'CONFIRMAR CONTRASEÑA' : 'CONFIRM PASSWORD'}<input type="password" required minLength={8} value={confirm} onChange={e => setConfirm(e.target.value)} /></label>
+      {error && <p className="error">{error}</p>}
+      <button className="btn-primary block" disabled={!token}>{es ? 'Actualizar contraseña' : 'Update password'}</button>
+    </form>}
+  </Card></PublicShell>
+}

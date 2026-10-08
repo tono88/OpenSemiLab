@@ -92,3 +92,23 @@ class AccessRequest(Base):
     reason: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(16), default="pending")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class SmtpSettings(Base):
+    """Configuracion SMTP unica del LAB; la clave se almacena cifrada."""
+
+    __tablename__ = "smtp_settings"
+
+    key: Mapped[str] = mapped_column(String(32), primary_key=True, default="default")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    host: Mapped[str] = mapped_column(String(255), default="")
+    port: Mapped[int] = mapped_column(default=587)
+    encryption: Mapped[str] = mapped_column(String(16), default="starttls")
+    username: Mapped[str] = mapped_column(String(320), default="")
+    password_encrypted: Mapped[str] = mapped_column(Text, default="")
+    from_email: Mapped[str] = mapped_column(String(320), default="")
+    from_name: Mapped[str] = mapped_column(String(160), default="OpenSemiLab")
+    updated_by: Mapped[str] = mapped_column(String(320), default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )

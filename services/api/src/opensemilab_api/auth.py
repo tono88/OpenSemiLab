@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from opensemilab_api.db import get_db, init_db
 from opensemilab_api.models_db import EmailVerification, PasswordReset, User
+from opensemilab_api.smtp_service import send_configured_email
 
 log = logging.getLogger("opensemilab.auth")
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -122,7 +123,11 @@ def is_allowed_email(email: str) -> bool:
     return bool(_EDU_RE.search(domain))
 
 
-def _new_verify_token(db: Session, user: User) -> str:
+def _public_url() -> str:
+    return os.getenv("OPENSEMILAB_PUBLIC_URL", "http://localhost:5173").rstrip("/")
+
+
+def _new_verify_token(db: Session, user: User) -> tuple[str, bool | None]:
     raw = secrets.token_urlsafe(32)
     db.add(
         EmailVerification(
@@ -132,9 +137,16 @@ def _new_verify_token(db: Session, user: User) -> str:
         )
     )
     db.commit()
-    # TODO Fase C: enviar link por SMTP del LAB. En dev se loguea.
-    log.warning("Verify %s -> #/verificar?token=%s (solo dev, mandar por SMTP en LAB)", user.email, raw)
-    return raw
+    link = f"{_public_url()}/#/verificar?token={raw}"
+    sent = send_configured_email(
+        db,
+        user.email,
+        "Verifica tu cuenta de OpenSemiLab",
+        f"Hola {user.name or user.email},\n\nActiva tu cuenta con este enlace (valido 48 horas):\n{link}\n",
+    )
+    if sent is None:
+        log.warning("Verify %s -> %s (SMTP desactivado)", user.email, link)
+    return raw, sent
 
 
 def _issue_token(user: User) -> str:
@@ -215,8 +227,8 @@ def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)) 
     db.add(user)
     db.commit()
     db.refresh(user)
-    raw = _new_verify_token(db, user)
-    out: dict = {"ok": True, "email": user.email, "verify_required": True}
+    raw, sent = _new_verify_token(db, user)
+    out: dict = {"ok": True, "email": user.email, "verify_required": True, "email_sent": sent}
     if os.getenv("OPENSEMILAB_EXPOSE_RESET_TOKEN") == "1":
         out["dev_token"] = raw
     return out
@@ -281,7 +293,7 @@ def resend(body: ResendIn, request: Request, db: Session = Depends(get_db)) -> d
     user = db.query(User).filter_by(email=email).first()
     if user is None or user.is_verified:
         return {"ok": True}
-    raw = _new_verify_token(db, user)
+    raw, _sent = _new_verify_token(db, user)
     out: dict = {"ok": True}
     if os.getenv("OPENSEMILAB_EXPOSE_RESET_TOKEN") == "1":
         out["dev_token"] = raw
@@ -311,8 +323,16 @@ def forgot(body: ForgotIn, db: Session = Depends(get_db)) -> dict:
         )
     )
     db.commit()
-    # TODO Fase C: enviar por SMTP del LAB. En dev se loguea.
-    log.warning("Password reset para %s token=%s (solo dev, mandar por SMTP en LAB)", email, raw)
+    link = f"{_public_url()}/#/restablecer?token={raw}"
+    _sent = send_configured_email(
+        db,
+        email,
+        "Restablece tu contrasena de OpenSemiLab",
+        f"Solicitaste restablecer tu contrasena. Usa este enlace (valido 2 horas):\n{link}\n",
+    )
+    if _sent is None:
+        log.warning("Password reset para %s -> %s (SMTP desactivado)", email, link)
+    # Mantener respuesta indistinguible para no revelar si el correo existe.
     out: dict = {"ok": True}
     if os.getenv("OPENSEMILAB_EXPOSE_RESET_TOKEN") == "1":
         out["dev_token"] = raw

@@ -109,6 +109,23 @@ The first build downloads the IIC-OSIC-TOOLS image, which is substantially large
 
 Open <http://localhost:5173>. The API documentation is at <http://localhost:8000/docs>.
 
+### First administrator and SMTP
+
+No fixed production administrator password is shipped. Register the intended account in the web UI, then list and promote it from the API container:
+
+```bash
+docker compose -p opensemilab exec api opensemilab-admin list
+docker compose -p opensemilab exec api opensemilab-admin promote your-address@university.edu
+```
+
+After signing in again, **Admin > Outgoing mail server** configures SMTP and sends a live test message. SMTP passwords are encrypted before storage and are never returned by the API. Production deployments should define stable `OPENSEMILAB_SETTINGS_KEY`, `OPENSEMILAB_PUBLIC_URL`, and secure cookies in `.env`:
+
+```dotenv
+OPENSEMILAB_SETTINGS_KEY=a-separate-random-secret-at-least-32-characters
+OPENSEMILAB_PUBLIC_URL=https://opensemilab.example.edu
+OPENSEMILAB_COOKIE_SECURE=1
+```
+
 ### Local development
 
 Requirements: Node.js 20+, Python 3.11+.
