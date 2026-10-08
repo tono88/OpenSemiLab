@@ -105,8 +105,8 @@ def make_plan(project: DesignRequest) -> DesignPlan:
         ],
         "blank_project": [
             stage("design", "Design inputs", "Add source, schematic or model files without replacing the project structure.", ["OpenSemiLab"], "versioned design inputs", "ready"),
-            stage("verification", "Verification", "Add tests, properties and sign-off criteria for the selected design domain.", ["IIC-OSIC-TOOLS"], "verification evidence", "ready"),
-            stage("implementation", "Implementation", "Configure the digital, analog or physical implementation route.", ["IIC-OSIC-TOOLS"], "implementation artifacts", "optional"),
+            stage("verification", "Verification", "Add tests, properties and sign-off criteria for the selected design domain.", ["Open EDA tools"], "verification evidence", "ready"),
+            stage("implementation", "Implementation", "Configure the digital, analog or physical implementation route.", ["Open EDA tools"], "implementation artifacts", "optional"),
         ],
     }
     selected_stages = [stage.model_copy(deep=True) for stage in flows[project.kind]]
@@ -126,19 +126,19 @@ def make_plan(project: DesignRequest) -> DesignPlan:
         )
     else:
         notice = (
-            "RTL, formal, FPGA, SPICE simulation with ngspice/Xyce, and specialized open EDA adapters are executable in the isolated IIC-OSIC worker. "
+            "RTL, formal, FPGA, SPICE simulation with ngspice/Xyce, and specialized open EDA adapters are executable in the isolated EDA flow. "
             "LibreLane physical implementation is available for SKY130/GF180. Mixed-signal co-simulation remains in development."
             if rtl_runner_available and spice_runner_available
             else "RTL lint, simulation and synthesis are executable; LibreLane RTL-to-GDSII is available for SKY130/GF180 projects."
             if rtl_runner_available
-            else "SPICE/Xyce, Xschem, CACE and openEMS adapters are executable in the isolated IIC-OSIC worker."
+            else "SPICE/Xyce, Xschem, CACE and openEMS adapters are executable in the isolated EDA flow."
             if spice_runner_available
             else "This engineering flow is planned; its isolated execution adapter remains in development."
         )
     return DesignPlan(
         project=project,
         stages=selected_stages,
-        runner="IIC-OSIC-TOOLS isolated worker",
+        runner="OpenSemiLab isolated EDA flow",
         runner_available=rtl_runner_available or spice_runner_available,
         notice=notice,
     )

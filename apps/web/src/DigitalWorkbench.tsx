@@ -79,15 +79,15 @@ export default function DigitalWorkbench({ locale }: { locale: 'es' | 'en' }) {
   const simulationAvailable=Boolean(tools.iverilog?.available&&tools.vvp?.available)
   const synthesisAvailable=Boolean(tools.yosys?.available)
   const workerMessage=worker==='online'
-    ? (es?'Worker IIC-OSIC conectado · herramientas RTL listas':'IIC-OSIC worker online · RTL toolchain ready')
+    ? (es?'Flujo EDA conectado · herramientas RTL listas':'EDA flow online · RTL toolchain ready')
     : worker==='degraded'
       ? (es?'Worker conectado · faltan herramientas RTL requeridas en PATH':'Worker connected · required RTL tools are missing from PATH')
       : worker==='checking'
-        ? (es?'Comprobando worker IIC-OSIC…':'Checking IIC-OSIC worker…')
+        ? (es?'Comprobando flujo EDA…':'Checking EDA flow…')
         : (es?'Worker desconectado — reconstruya Docker para habilitar la ejecución':'Worker offline — rebuild the Docker stack to enable execution')
 
   return <section className="workbench">
-    <div className="section-heading"><span>04</span><div><h2>{es?'Banco de trabajo RTL':'RTL workbench'}</h2><p>{es?'Edite SystemVerilog real y ejecute herramientas de línea de comandos dentro de IIC-OSIC-TOOLS.':'Edit real SystemVerilog and execute command-line tools inside IIC-OSIC-TOOLS.'}</p></div></div>
+    <div className="section-heading"><span>04</span><div><h2>{es?'Banco de trabajo RTL':'RTL workbench'}</h2><p>{es?'Edite SystemVerilog real y ejecute las herramientas integradas de línea de comandos.':'Edit real SystemVerilog and run the integrated command-line tools.'}</p></div></div>
     <div className={`worker-state ${worker}`}><i/>{workerMessage}<button onClick={refresh}>{es?'Comprobar':'Check again'}</button></div>
     <div className="editor-grid"><label><span>top.sv · {es?'diseño para síntesis':'synthesized design'}</span><textarea value={rtl} onChange={e=>setRtl(e.target.value)} spellCheck={false}/></label><label><span>tb.sv · {es?'banco de pruebas':'simulation testbench'}</span><textarea value={testbench} onChange={e=>setTestbench(e.target.value)} spellCheck={false}/></label></div>
     <div className="action-bar"><button disabled={!lintAvailable||!!running} onClick={()=>run('lint')}><span>01</span>{running==='lint'?(es?'Ejecutando…':'Running…'):(es?'Analizar RTL':'Lint RTL')}<small>{lintAvailable?(tools.verible_lint?.available?'Verible':'Verilator'):(es?'No disponible':'Unavailable')}</small></button><button disabled={!simulationAvailable||!!running} onClick={()=>run('simulate')}><span>02</span>{running==='simulate'?(es?'Ejecutando…':'Running…'):(es?'Simular':'Simulate')}<small>{simulationAvailable?'Icarus Verilog':(es?'No disponible':'Unavailable')}</small></button><button disabled={!synthesisAvailable||!!running} onClick={()=>run('synthesize')}><span>03</span>{running==='synthesize'?(es?'Ejecutando…':'Running…'):(es?'Sintetizar':'Synthesize')}<small>{synthesisAvailable?'Yosys':(es?'No disponible':'Unavailable')}</small></button></div>

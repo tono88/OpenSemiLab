@@ -25,9 +25,9 @@ export function Landing() {
       <p className="eyebrow">{es ? 'CON QUÉ ESTÁ CONSTRUIDO' : 'WHAT IT RUNS ON'}</p>
       <h2>{es ? 'Motores abiertos, resultados verificables.' : 'Open engines, verifiable results.'}</h2>
       <p>{es
-        ? 'La ejecución de hardware corre sobre IIC-OSIC-TOOLS (Verible/Verilator, Icarus, GHDL, Yosys, ngspice, Xyce, openEMS, Xschem, CACE, nextpnr, KLayout, Magic, Netgen, OpenROAD/OpenSTA vía LibreLane) con PDKs abiertos SKY130, GF180MCU e IHP. OpenSemiLab orquesta esos motores y normaliza sus resultados — no los reemplaza.'
-        : 'Hardware execution runs on IIC-OSIC-TOOLS (Verible/Verilator, Icarus, GHDL, Yosys, ngspice, Xyce, openEMS, Xschem, CACE, nextpnr, KLayout, Magic, Netgen, OpenROAD/OpenSTA via LibreLane) with open SKY130, GF180MCU and IHP PDKs. OpenSemiLab orchestrates those engines and normalizes their results — it does not replace them.'}</p>
-      <small>{es ? 'IIC-OSIC-TOOLS es una distribución abierta de herramientas EDA; cada herramienta conserva su propia licencia.' : 'IIC-OSIC-TOOLS is an open distribution of EDA tools; each tool keeps its own license.'}</small>
+        ? 'La ejecución de hardware integra Verible/Verilator, Icarus, GHDL, Yosys, ngspice, Xyce, openEMS, Xschem, CACE, nextpnr, KLayout, Magic, Netgen y OpenROAD/OpenSTA vía LibreLane, con PDKs abiertos SKY130, GF180MCU e IHP. OpenSemiLab orquesta esos motores y normaliza sus resultados.'
+        : 'Hardware execution integrates Verible/Verilator, Icarus, GHDL, Yosys, ngspice, Xyce, openEMS, Xschem, CACE, nextpnr, KLayout, Magic, Netgen, and OpenROAD/OpenSTA via LibreLane, with open SKY130, GF180MCU and IHP PDKs. OpenSemiLab orchestrates those engines and normalizes their results.'}</p>
+      <small>{es ? 'Cada herramienta integrada conserva su propia licencia.' : 'Each integrated tool retains its own license.'}</small>
     </section>
   </PublicShell>
 }

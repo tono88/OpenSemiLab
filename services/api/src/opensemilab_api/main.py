@@ -162,7 +162,7 @@ def eda_capabilities(_user: User = Depends(get_current_user)) -> dict:
         response.raise_for_status()
         return response.json()
     except (httpx.HTTPError, ValueError) as error:
-        raise HTTPException(status_code=503, detail=f"IIC-OSIC worker unavailable: {error}") from error
+        raise HTTPException(status_code=503, detail=f"EDA execution service unavailable: {error}") from error
 
 
 @app.post("/api/v1/eda/run")
@@ -176,7 +176,7 @@ def run_eda_action(request: EdaRunRequest, _user: User = Depends(get_current_use
     except HTTPException:
         raise
     except (httpx.HTTPError, ValueError) as error:
-        raise HTTPException(status_code=503, detail=f"IIC-OSIC worker unavailable: {error}") from error
+        raise HTTPException(status_code=503, detail=f"EDA execution service unavailable: {error}") from error
 
 
 @app.post("/api/v1/eda/jobs", status_code=202)
@@ -192,7 +192,7 @@ def start_eda_job(request: EdaRunRequest, _user: User = Depends(get_current_user
     except HTTPException:
         raise
     except (httpx.HTTPError, ValueError) as error:
-        raise HTTPException(status_code=503, detail=f"IIC-OSIC worker unavailable: {error}") from error
+        raise HTTPException(status_code=503, detail=f"EDA execution service unavailable: {error}") from error
 
 
 @app.get("/api/v1/eda/jobs/{job_id}")
@@ -208,7 +208,7 @@ def get_eda_job(job_id: str, _user: User = Depends(get_current_user)) -> dict:
     except HTTPException:
         raise
     except (httpx.HTTPError, ValueError) as error:
-        raise HTTPException(status_code=503, detail=f"IIC-OSIC worker unavailable: {error}") from error
+        raise HTTPException(status_code=503, detail=f"EDA execution service unavailable: {error}") from error
 
 
 @app.post("/api/v1/eda/jobs/{job_id}/cancel", status_code=202)
@@ -224,7 +224,7 @@ def cancel_eda_job(job_id: str, _user: User = Depends(get_current_user)) -> dict
     except HTTPException:
         raise
     except (httpx.HTTPError, ValueError) as error:
-        raise HTTPException(status_code=503, detail=f"IIC-OSIC worker unavailable: {error}") from error
+        raise HTTPException(status_code=503, detail=f"EDA execution service unavailable: {error}") from error
 
 
 @app.post("/api/v1/simulations/pn-junction", response_model=SimulationResult)

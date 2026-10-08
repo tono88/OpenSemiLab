@@ -27,7 +27,7 @@ export function go(hash: string) { location.hash = hash }
 
 export function PublicShell({ children }: { children: React.ReactNode }) {
   return <div className="app-shell pub"><TopBar onNav={go} /><main className="pub-main">{children}</main>
-    <footer><span>OPEN SEMILAB · UNIVERSIDAD DEL ISTMO</span><span><a href="#/equipo">Equipo</a> · <a href="#/terminos">Términos</a> · <a href="#/privacidad">Privacidad</a> · <a href="https://github.com/tono88/OpenSemiLab">GitHub</a></span></footer></div>
+    <footer><span>OPEN SEMILAB · UNIVERSIDAD DEL ISTMO</span><span><a href="#/equipo">Equipo</a> · <a href="#/terminos">Términos</a> · <a href="#/privacidad">Privacidad</a></span></footer></div>
 }
 
 export function usePublicLocale() { return useLocale() }
