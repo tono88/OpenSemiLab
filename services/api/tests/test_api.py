@@ -98,6 +98,32 @@ def test_edu_general_accepts_and_rejects():
     assert ".edu" in bad.json()["detail"]
 
 
+def test_verify_link_logged_when_smtp_fails(monkeypatch, caplog):
+    import logging
+    import uuid
+
+    import opensemilab_api.auth as auth_mod
+    from opensemilab_api.auth import _hash_pw as _h
+    from opensemilab_api.db import SessionLocal as SL, init_db as _init
+    from opensemilab_api.models_db import User as _User
+
+    monkeypatch.setattr(auth_mod, "send_configured_email", lambda *a, **k: False)
+    _init()
+    db = SL()
+    email = f"smtpfail-{uuid.uuid4().hex[:8]}@uni.edu.mx"
+    u = _User(email=email, name="S", password_hash=_h("x" * 16))
+    db.add(u)
+    db.commit()
+    db.refresh(u)
+    with caplog.at_level(logging.WARNING, logger="opensemilab.auth"):
+        raw, sent = auth_mod._new_verify_token(db, u)
+    assert sent is False
+    assert raw in "\n".join(caplog.messages)
+    db.delete(u)
+    db.commit()
+    db.close()
+
+
 def test_login_lockout_escalates():
     email = "bloqueado@unis.edu.gt"
     for _ in range(5):

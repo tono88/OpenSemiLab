@@ -146,6 +146,9 @@ def _new_verify_token(db: Session, user: User) -> tuple[str, bool | None]:
     )
     if sent is None:
         log.warning("Verify %s -> %s (SMTP desactivado)", user.email, link)
+    elif sent is False:
+        # Fallo de entrega: el link jamás debe perderse, queda en el log del servidor.
+        log.warning("Verify %s -> %s (SMTP fallo, revisar #/admin)", user.email, link)
     return raw, sent
 
 
@@ -332,6 +335,9 @@ def forgot(body: ForgotIn, db: Session = Depends(get_db)) -> dict:
     )
     if _sent is None:
         log.warning("Password reset para %s -> %s (SMTP desactivado)", email, link)
+    elif _sent is False:
+        # Fallo de entrega: el link jamás debe perderse, queda en el log del servidor.
+        log.warning("Password reset para %s -> %s (SMTP fallo, revisar #/admin)", email, link)
     # Mantener respuesta indistinguible para no revelar si el correo existe.
     out: dict = {"ok": True}
     if os.getenv("OPENSEMILAB_EXPOSE_RESET_TOKEN") == "1":

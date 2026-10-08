@@ -89,7 +89,7 @@ export function Forgot() {
     catch (err) { setError(err instanceof Error ? err.message : 'Request failed') }
   }
   return <PublicShell><Card title={es ? 'Recuperar contraseña' : 'Reset password'}>
-    {done ? <p>{es ? 'Si el correo existe, enviamos instrucciones (en el LAB por email; en dev revisa el log del API).' : 'If the email exists, we sent instructions (via email in LAB; check API log in dev).'}</p> : <form onSubmit={submit}>
+    {done ? <p>{es ? 'Si el correo existe, enviamos instrucciones para restablecer tu contraseña.' : 'If the email exists, we sent password reset instructions.'}</p> : <form onSubmit={submit}>
       <label>{es ? 'EMAIL INSTITUCIONAL' : 'INSTITUTIONAL EMAIL'}<input type="email" required value={email} onChange={e => setEmail(e.target.value)} /></label>
       {error && <p className="error">{error}</p>}
       <button className="btn-primary block">{es ? 'Enviar instrucciones' : 'Send instructions'}</button>
