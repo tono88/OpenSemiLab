@@ -23,7 +23,7 @@ for (const [kind, files] of Object.entries(projects)) {
     if (manifest.execution.spice_entry) {
       assert.ok(paths.includes(manifest.execution.spice_entry))
       assert.ok(paths.includes('verification/spice_checks.json'))
-      assert.match(files.find(file => file.path === manifest.execution.spice_entry).content, /\.meas/i)
+      assert.match(files.find(file => file.path === manifest.execution.spice_entry).content, /(?:^|\n)\.?meas\s/i)
     }
     if (kind.endsWith('_vhdl')) {
       assert.ok(!paths.some(file => /\.(sv|sby)$/.test(file)))

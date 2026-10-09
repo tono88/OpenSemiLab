@@ -16,6 +16,9 @@
 Para RTL: Icarus Verilog y Yosys. Para SPICE: ngspice. La variante VHDL usa
 GHDL con VHDL-2008. Python 3 verifica manifiestos y medidas sin dependencias
 adicionales. GNU Make coordina las pruebas. Instale solo lo que use su proyecto.
+Los bancos SPICE combinados utilizan el lenguaje `.control` de ngspice para
+medir cada análisis con sus propios datos; para otro simulador adapte esas
+instrucciones según su sintaxis.
 
 Desde una terminal en la raíz del ZIP extraído:
 

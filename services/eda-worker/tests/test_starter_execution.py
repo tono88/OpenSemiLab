@@ -96,7 +96,7 @@ class StarterExecutionTests(unittest.TestCase):
                 self.assertIn("PASS", output)
 
     @unittest.skipUnless(shutil.which("yosys"), "Yosys required")
-    def test_real_yosys_synthesis_and_formal_harness_preparation(self):
+    def test_real_yosys_synthesis_and_formal_assertions(self):
         for name in ("microcontroller", "sensor_interface", "standard_cell", "fpga_prototype"):
             with self.subTest(project=name), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
@@ -109,7 +109,10 @@ class StarterExecutionTests(unittest.TestCase):
                 root = Path(directory)
                 self.materialize(name, root)
                 sources = [file["path"] for file in self.projects[name] if file["path"].endswith('.sv') and (file["role"] == "source" or file["path"].startswith("verification/formal/"))]
-                script = f"read_verilog -formal -sv {' '.join(sources)}; prep -top {top}; async2sync; dffunmap; check -assert"
+                depth = 24 if name == "microcontroller" else 2
+                # Prove assertions with the built-in SAT backend as well as
+                # checking the harness. This needs no external SMT solver.
+                script = f"read_verilog -formal -sv {' '.join(sources)}; prep -top {top}; async2sync; dffunmap; check -assert; flatten; opt_clean; sat -seq {depth} -prove-asserts -set-assumes -verify"
                 result = subprocess.run(["yosys", "-p", script], cwd=root, capture_output=True, text=True, timeout=45)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 

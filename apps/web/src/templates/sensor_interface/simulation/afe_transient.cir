@@ -5,12 +5,20 @@ VCM vcm 0 1.65
 VREF vref 0 0.75
 VIN sensor 0 DC 0.65 AC 1 PULSE(0.65 0.85 1m 10u 10u 4m 10m)
 XAFE sensor adc vcm vref sensor_afe
-.op
-.tran 10u 12m
-.print tran v(sensor) v(adc)
-.meas tran settled_low FIND v(adc) AT=0.9m
-.meas tran settled_high FIND v(adc) AT=4m
-.ac dec 30 1 100k
-.print ac vdb(adc) vp(adc)
-.meas ac gain_low FIND vdb(adc) AT=10
+* ngspice: guardar vectores y medir cada analisis mientras su plot esta activo.
+* Evita mezclar tablas AC/transitorio al ejecutar varios analisis en batch.
+.control
+set noaskquit
+save all
+op
+print v(sensor) v(adc)
+tran 10u 12m
+meas tran settled_low FIND v(adc) AT=0.9m
+meas tran settled_high FIND v(adc) AT=4m
+print v(sensor) v(adc)
+ac dec 30 1 100k
+meas ac gain_low FIND vdb(adc) AT=10
+print vdb(adc) vp(adc)
+quit
+.endc
 .end

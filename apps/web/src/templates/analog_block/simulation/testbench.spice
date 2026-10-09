@@ -9,13 +9,20 @@ XU1 in fb out vref opamp A0={A0} FP={FP}
 RF out fb 80k
 RG fb vref 20k
 CL out 0 1p
-.op
-.ac dec 60 10 10Meg
-.print ac vdb(out) vp(out)
-.meas ac gain_low FIND vdb(out) AT=100
-.meas ac gain_high FIND vdb(out) AT=10Meg
-.tran 20n 200u
-.print tran v(in) v(out)
-.meas tran output_max MAX v(out) FROM=100u TO=200u
-.meas tran output_min MIN v(out) FROM=100u TO=200u
+* Secuencia ngspice: las medidas se toman del plot correcto antes de cambiarlo.
+.control
+set noaskquit
+save all
+op
+print v(in) v(out)
+ac dec 60 10 10Meg
+meas ac gain_low FIND vdb(out) AT=100
+meas ac gain_high FIND vdb(out) AT=10Meg
+print vdb(out) vp(out)
+tran 20n 200u
+meas tran output_max MAX v(out) FROM=100u TO=200u
+meas tran output_min MIN v(out) FROM=100u TO=200u
+print v(in) v(out)
+quit
+.endc
 .end

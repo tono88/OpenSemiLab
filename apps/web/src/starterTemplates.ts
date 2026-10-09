@@ -80,7 +80,7 @@ export function createStarterFiles(kind: string, name: string, pdk: string, lang
     starter: { id: kind, version: STARTER_VERSION, language: isVhdl ? 'vhdl' : 'systemverilog', scope: kind === 'blank_project' ? 'structured-workspace' : 'tested-starter-not-foundry-signoff' },
     execution: config,
     physical: { clock_port: 'clk', clock_period_ns: 25, floorplan_mode: 'auto', die_width_um: 120, die_height_um: 120, core_utilization_pct: 40, timing_effort: 'balanced' },
-    adapters: { formal: { depth: 24, mode: 'bmc' }, fpga: { device: 'up5k', package: 'sg48', frequency_mhz: 12 } },
+    adapters: { formal: kind === 'standard_cell' ? { depth: 2, mode: 'prove' } : { depth: 24, mode: 'bmc' }, fpga: { device: 'up5k', package: 'sg48', frequency_mhz: 12 } },
   }
   files.unshift({ path: 'project.json', role: 'configuration', content: JSON.stringify(manifest, null, 2) + '\n' })
   files.push({ path: 'Makefile', role: 'configuration', content: makefile(files, config, kind, isVhdl ? 'vhdl' : 'systemverilog') })
