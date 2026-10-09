@@ -54,7 +54,7 @@ function makefile(files: ProjectFile[], config: Record<string, string>, kind: st
     '', 'synth:', '\tmkdir -p build', `\t$(YOSYS) -p 'read_verilog -sv ${rtl}; hierarchy -check -top ${config.rtl_top}; proc; opt; check -assert; stat; write_json build/netlist.json'`, '',
   )
   if (vhdl) lines.push('sim:', '\tmkdir -p build', `\t$(GHDL) -a --std=08 --workdir=build ${vhdl}`, `\t$(GHDL) -e --std=08 --workdir=build ${config.testbench_top}`, `\t$(GHDL) -r --std=08 --workdir=build ${config.testbench_top} --assert-level=error --vcd=build/waveform.vcd`, '')
-  if (analog) lines.push('spice:', '\tmkdir -p build', `\t$(NGSPICE) -b -o build/spice.log ${config.spice_entry}`, '\t$(PYTHON) scripts/check_spice.py build/spice.log', '')
+  if (analog) lines.push('spice:', '\tmkdir -p build', `\t$(NGSPICE) -b -o build/spice.log ${config.spice_entry} || { tail -n 80 build/spice.log; exit 1; }`, '\t$(PYTHON) scripts/check_spice.py build/spice.log', '')
   if (kind === 'rf_frontend') lines.push('rf:', '\t$(PYTHON) scripts/rf_network.py', '')
   const formal = files.find(file => file.path.endsWith('.sby'))
   if (formal) lines.push('formal:', `\tsby -f ${formal.path}`, '')

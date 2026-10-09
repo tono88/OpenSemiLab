@@ -40,7 +40,11 @@ class StarterExecutionTests(unittest.TestCase):
             root = Path(directory)
             self.materialize(name, root)
             result = subprocess.run(["make", target], cwd=root, capture_output=True, text=True, timeout=90)
-            self.assertEqual(result.returncode, 0, f"{name} / make {target}:\n{result.stdout}\n{result.stderr}")
+            # Include the simulator's diagnostic file, not only make's wrapper.
+            # Temporary project directories disappear when the test finishes.
+            log_path = root / "build/spice.log"
+            diagnostics = log_path.read_text(errors="replace") if result.returncode and log_path.exists() else ""
+            self.assertEqual(result.returncode, 0, f"{name} / make {target}:\n{result.stdout}\n{result.stderr}\n{diagnostics[:16000]}")
             self.assertIn("PASS", result.stdout + result.stderr)
             return result.stdout
 
