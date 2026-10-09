@@ -1,0 +1,4 @@
+* Modelos MOS level-1 GENERICOS para ejecutar la plantilla sin PDK.
+* NO equivalentes ni validados para {{PDK}}. No usarlos para sign-off.
+.model NMOS_DEMO NMOS (LEVEL=1 VTO=0.45 KP=200u LAMBDA=0.02)
+.model PMOS_DEMO PMOS (LEVEL=1 VTO=-0.45 KP=100u LAMBDA=0.02)

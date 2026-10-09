@@ -34,4 +34,5 @@
 
 /* Keep import actions below the project heading instead of using the legacy offset. */
 .project-library .library-actions{align-items:stretch;justify-content:flex-start;flex-wrap:wrap;margin:0 0 22px;gap:8px}.project-library .github-import{min-width:min(100%,420px)}.project-library .github-import input{display:block}
+.project-toolbar>div:last-child{flex-wrap:wrap;justify-content:flex-end}
 @media(max-width:560px){.project-library .github-import{flex-basis:100%}}

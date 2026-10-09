@@ -1,3 +1,5 @@
+import { createStarterFiles } from './starterTemplates'
+
 export interface ProjectFile {
   path: string
   content: string
@@ -101,7 +103,9 @@ const microWatchdog = `module watchdog_timer #(
 endmodule
 `
 
-export function starterFiles(kind:string,name:string,pdk:string):ProjectFile[] {
+// Keep the old starter only for backward-compatible migrations. Never insert
+// new v2 peripherals into an existing design: that could change its behavior.
+function legacyStarterFiles(kind:string,name:string,pdk:string):ProjectFile[] {
   const common:ProjectFile[]=[
     {path:'README.md',role:'documentation',content:readme(name,kind,pdk)},
     {path:'project.json',role:'configuration',content:manifest(name,kind,pdk)},
@@ -465,12 +469,22 @@ parameters: {}
   return [...common,...(byKind[kind]??[])]
 }
 
+export function starterFiles(kind:string,name:string,pdk:string,language='systemverilog'):ProjectFile[] {
+  return createStarterFiles(kind,name,pdk,language)
+}
+
 export function loadProjects():StoredProject[] {
   try {
     const projects=JSON.parse(localStorage.getItem(STORAGE_KEY)??'[]') as StoredProject[]
     let changed=false
     const upgraded=projects.map(project=>{
-      const starters=starterFiles(project.kind,project.name,project.pdk)
+      try {
+        const savedManifest=JSON.parse(project.files.find(file=>file.path==='project.json')?.content??'{}')
+        // V2 projects are user-owned: deletions and edits must survive reload.
+        if(savedManifest.starter?.version>=2)return project
+      } catch { /* Continue the legacy migration without replacing bad JSON. */ }
+      const starters=legacyStarterFiles(project.kind,project.name,project.pdk).filter(file=>
+        project.language!=='vhdl'||!['.sv','.v'].some(extension=>file.path.endsWith(extension)))
       const missing=starters.filter(file=>!project.files.some(existing=>existing.path===file.path))
       let files=[...project.files,...missing]
       const watchdogIndex=files.findIndex(file=>file.path==='rtl/watchdog_timer.sv')
@@ -507,36 +521,6 @@ export function saveProjects(projects:StoredProject[]):void {
 
 export function createProject(input:Pick<StoredProject,'name'|'kind'|'pdk'|'level'|'language'>):StoredProject {
   const now=new Date().toISOString()
-  let files=starterFiles(input.kind,input.name,input.pdk)
-  if(input.language==='vhdl'&&['microcontroller','fpga_prototype'].includes(input.kind)) {
-    files=files.filter(file=>!['.sv','.v'].some(extension=>file.path.endsWith(extension)))
-    files.push(
-      {path:'rtl/top.vhd',role:'source',content:`library ieee;
-use ieee.std_logic_1164.all;
-entity top is port(clk, rst_n : in std_logic; led : out std_logic); end entity;
-architecture rtl of top is
-  signal state : std_logic := '0';
-begin
-  process(clk) begin
-    if rising_edge(clk) then
-      if rst_n='0' then state <= '0'; else state <= not state; end if;
-    end if;
-  end process;
-  led <= state;
-end architecture;
-`},
-      {path:'tb/tb_top.vhd',role:'testbench',content:`library ieee;
-use ieee.std_logic_1164.all;
-entity tb_top is end entity;
-architecture sim of tb_top is
-  signal clk : std_logic := '0'; signal rst_n : std_logic := '0'; signal led : std_logic;
-begin
-  dut: entity work.top port map(clk=>clk,rst_n=>rst_n,led=>led);
-  clk <= not clk after 5 ns;
-  process begin wait for 12 ns; rst_n <= '1'; wait for 80 ns; report "PASS VHDL simulation"; wait; end process;
-end architecture;
-`},
-    )
-  }
+  const files=starterFiles(input.kind,input.name,input.pdk,input.language)
   return {...input,id:crypto.randomUUID(),createdAt:now,updatedAt:now,files}
 }

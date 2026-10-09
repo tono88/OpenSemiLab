@@ -1,0 +1,21 @@
+* Ganancia cerrada = 1 + 80k/20k = 5 alrededor de VREF=0.9 V.
+* VIN=0.92 +/-0.02 V produce VOUT ~1.00 +/-0.10 V, dentro de 0..1.8 V.
+* Referenciar RG a VREF, no a masa: evita saturar por el offset DC.
+.include schematic/opamp.spice
+.param A0=10000 FP=100
+VREF vref 0 0.9
+VIN in 0 DC 0.92 AC 1 SIN(0.92 0.02 10k)
+XU1 in fb out vref opamp A0={A0} FP={FP}
+RF out fb 80k
+RG fb vref 20k
+CL out 0 1p
+.op
+.ac dec 60 10 10Meg
+.print ac vdb(out) vp(out)
+.meas ac gain_low FIND vdb(out) AT=100
+.meas ac gain_high FIND vdb(out) AT=10Meg
+.tran 20n 200u
+.print tran v(in) v(out)
+.meas tran output_max MAX v(out) FROM=100u TO=200u
+.meas tran output_min MIN v(out) FROM=100u TO=200u
+.end

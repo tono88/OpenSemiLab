@@ -93,6 +93,39 @@ The specialized adapter cards infer their entry point from project files and rem
 
 FPGA projects may define `execution.fpga_top` independently from `execution.rtl_top`. This lets a reusable core keep its full internal bus interface while nextpnr implements a small board wrapper with only real package pins. The worker checks top-level I/O against known iCE40 package capacity before place-and-route and reports an actionable wrapper diagnostic.
 
+### Documented, executable starter templates (v2)
+
+New projects include commented sources, self-checking testbenches, numerical
+acceptance criteria, a Makefile, modification guides and implementation limits.
+Use **Sources .zip** in the project toolbar to download an actual multi-file
+workspace; from the extracted root run `make check` and `make test`.
+The normal JSON export still preserves a reimportable project snapshot.
+
+| Starter | Runnable reference | Further implementation work |
+|---|---|---|
+| Microcontroller / peripherals | Register bus, GPIO, timer, watchdog, regression, formal harness and FPGA wrapper | Integrate a CPU/memory/bus bridge; no RISC-V core is included |
+| Sensor | Signed average, calibration, saturation, ready/valid backpressure and independent analog RC/gain simulation | Real ADC, CDC, noise and mixed-signal integration |
+| Analog | Amplifier macromodel, AC/transient metrics and parameter sweep | Transistor topology, actual PVT/mismatch and custom layout |
+| RF | LC network, SPICE sweep, analytical S-parameters, CSV/Touchstone export and passivity checks | Active RF devices, materials, ports, meshing and EM extraction |
+| Standard cell | Logic/formal truth table, generic CMOS VTC and delay measurements | Foundry models, complete characterization, Liberty and legal LEF/GDS |
+| FPGA | PWM/heartbeat, synchronizer, debounce and quantified duty tests | Actual board pinout, voltage, clock and programming |
+| Blank | Validated structure, verification plan and workflow recipes | Add a design; it deliberately contains no example circuit |
+
+Microcontroller and FPGA also provide a separate, self-checking VHDL-2008
+GPIO/counter/PWM variant. GHDL runs it; the current web implementation adapters
+still require Verilog/SystemVerilog for synthesis/physical/FPGA workflows.
+
+Templates are stored as readable assets in `apps/web/src/templates/`. Version 2
+is recorded in `project.json`; existing projects retain their previous sources
+and are **not** overwritten or merged with an incompatible new starter.
+Create a new project to get v2. Deleted v2 files remain deleted on reload.
+Generic models and analytical responses are not foundry sign-off evidence.
+DEVSIM continues to run on the **client computer**, not on the portal server.
+
+Validation: `cd apps/web && npm test`; worker tests generate the same browser
+assets and exercise real Icarus, Yosys, ngspice and GHDL when installed. CI
+requires those tools, so missing binaries cannot silently skip execution checks.
+
 ### Project import
 
 The Design Studio accepts both exported `.opensemilab.json` files and public repository-root URLs such as `https://github.com/owner/project`. GitHub imports are downloaded through fixed GitHub API/codeload hosts, bounded by archive, file-count and text-size limits, and converted into the portable OpenSemiLab project schema. The importer detects supported design files, assigns roles, infers a likely RTL top, records provenance, and leaves `project.json` editable for project-specific refinement.

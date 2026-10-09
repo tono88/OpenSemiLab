@@ -289,6 +289,25 @@ def test_design_templates_cover_major_flows():
     assert {"microcontroller", "sensor_interface", "analog_block", "rf_frontend", "blank_project"} <= kinds
 
 
+def test_starter_catalog_describes_actual_examples_without_claiming_a_cpu():
+    templates = {item["id"]: item for item in client.get("/api/v1/design/templates").json()}
+    assert "not a complete RISC-V core" in templates["microcontroller"]["description"]
+    assert "Touchstone" in templates["rf_frontend"]["description"]
+    assert "generic transistor models" in templates["standard_cell"]["description"]
+
+
+def test_rf_template_has_a_connected_spice_starter_without_claiming_em_signoff():
+    response = client.post("/api/v1/design/plan", json={
+        "name": "RF matching demo", "kind": "rf_frontend", "pdk": "ihp-sg13g2",
+        "level": "guided", "language": "schematic",
+    })
+    assert response.status_code == 200
+    result = response.json()
+    assert result["runner_available"] is True
+    assert next(stage for stage in result["stages"] if stage["id"] == "circuit")["status"] == "ready"
+    assert next(stage for stage in result["stages"] if stage["id"] == "em")["status"] == "adapter_pending"
+
+
 def test_private_pdk_import_is_sanitized_and_deletable(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENSEMILAB_PDK_ROOT", str(tmp_path / "pdks"))
     archive = io.BytesIO()

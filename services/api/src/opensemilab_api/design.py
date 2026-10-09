@@ -46,13 +46,13 @@ class DesignPlan(BaseModel):
 
 
 TEMPLATES = [
-    DesignTemplate(id="microcontroller", title="Microcontroller / SoC", description="Build a RISC-V based controller with memory, buses and peripherals from RTL to GDSII.", outputs=["verified RTL", "timing reports", "GDSII"], recommended_pdk="sky130A", tags=["digital", "RISC-V", "ASIC"]),
-    DesignTemplate(id="sensor_interface", title="Smart sensor interface", description="Combine a sensing front-end, ADC/control logic and digital communications in a mixed-signal project.", outputs=["schematic", "mixed-signal tests", "layout"], recommended_pdk="gf180mcuD", tags=["sensor", "analog", "mixed-signal"]),
-    DesignTemplate(id="analog_block", title="Analog integrated block", description="Design and characterize an amplifier, reference, oscillator or data-converter building block.", outputs=["SPICE corners", "layout", "DRC/LVS/PEX"], recommended_pdk="sky130A", tags=["analog", "SPICE", "layout"]),
-    DesignTemplate(id="rf_frontend", title="RF front-end", description="Create RF/SiGe blocks and connect circuit, electromagnetic and layout verification.", outputs=["S-parameters", "EM model", "GDSII"], recommended_pdk="ihp-sg13g2", tags=["RF", "SiGe", "EM"]),
-    DesignTemplate(id="standard_cell", title="Standard cell / reusable IP", description="Create, verify, characterize and package a reusable cell or IP block.", outputs=["Liberty", "LEF/GDS", "verification deck"], recommended_pdk="sky130A", tags=["IP", "characterization", "library"]),
-    DesignTemplate(id="fpga_prototype", title="FPGA prototype", description="Validate digital architecture on iCE40 or ECP5 before committing to an ASIC flow.", outputs=["bitstream", "coverage", "waveforms"], recommended_pdk="sky130A", tags=["FPGA", "prototype", "digital"]),
-    DesignTemplate(id="blank_project", title="Blank structured project", description="Start from an organized engineering workspace without example circuitry.", outputs=["project manifest", "stage folders", "reproducible structure"], recommended_pdk="sky130A", tags=["blank", "structure", "custom"]),
+    DesignTemplate(id="microcontroller", title="Microcontroller / peripheral subsystem", description="Register bus, GPIO, programmable timer, watchdog, self-checking tests and FPGA wrapper. A documented base for integrating a CPU, not a complete RISC-V core.", outputs=["tested RTL", "register map", "formal watchdog", "FPGA wrapper"], recommended_pdk="sky130A", tags=["digital", "peripherals", "ASIC"]),
+    DesignTemplate(id="sensor_interface", title="Smart sensor interface", description="Signed sample averaging, calibration, saturation and ready/valid flow control, plus an independently tested analog gain/RC filter model.", outputs=["digital regression", "SPICE measurements", "error budget"], recommended_pdk="gf180mcuD", tags=["sensor", "analog", "mixed-signal"]),
+    DesignTemplate(id="analog_block", title="Analog integrated block", description="Executable amplifier macromodel with AC/transient measurements, numerical acceptance checks and parameter sweep. Includes a roadmap to transistor-level design.", outputs=["AC/transient plots", "measured gain", "macromodel sweep"], recommended_pdk="sky130A", tags=["analog", "SPICE", "layout"]),
+    DesignTemplate(id="rf_frontend", title="RF front-end", description="Runnable LC matching network, AC sweep and analytical two-port S-parameters with Touchstone export. Documents the separate path to real EM extraction.", outputs=["RF AC response", "Touchstone", "passivity checks"], recommended_pdk="ihp-sg13g2", tags=["RF", "matching", "EM"]),
+    DesignTemplate(id="standard_cell", title="Standard cell / reusable IP", description="CMOS inverter with generic transistor models, truth-table regression, formal properties, voltage transfer and propagation-delay measurements.", outputs=["tested logic", "VTC and delays", "characterization plan"], recommended_pdk="sky130A", tags=["IP", "characterization", "library"]),
+    DesignTemplate(id="fpga_prototype", title="FPGA prototype", description="Parameterized PWM dimmer and heartbeat with synchronized/debounced button, duty-cycle tests and documented iCE40 board configuration.", outputs=["PWM regression", "synthesizable RTL", "board checklist"], recommended_pdk="sky130A", tags=["FPGA", "prototype", "digital"]),
+    DesignTemplate(id="blank_project", title="Blank structured project", description="Validated manifest, workflow recipes, interface guidance and acceptance plan, without forcing an example circuit into your design.", outputs=["validated manifest", "verification plan", "workflow recipes"], recommended_pdk="sky130A", tags=["blank", "structure", "custom"]),
 ]
 
 
@@ -63,7 +63,7 @@ def stage(id: str, title: str, purpose: str, tools: list[str], output: str, stat
 def make_plan(project: DesignRequest) -> DesignPlan:
     digital_physical_supported = project.pdk in {"sky130A", "gf180mcuD"}
     rtl_runner_available = project.kind in {"microcontroller", "fpga_prototype", "sensor_interface", "standard_cell"}
-    spice_runner_available = project.kind in {"sensor_interface", "analog_block", "standard_cell"}
+    spice_runner_available = project.kind in {"sensor_interface", "analog_block", "standard_cell", "rf_frontend"}
     flows: dict[str, list[DesignStage]] = {
         "microcontroller": [
             stage("architecture", "Architecture & IP", "Define CPU, memories, buses, registers and peripherals.", ["FuseSoC", "Kactus2", "RISC-V toolchain", "rggen"], "IP-XACT and core manifest"),
@@ -86,7 +86,7 @@ def make_plan(project: DesignRequest) -> DesignPlan:
             stage("verification", "DRC / LVS / PEX", "Verify rules, connectivity and extracted performance.", ["KLayout", "gdscheck", "Netgen", "KLayout PEX"], "signoff candidate"),
         ],
         "rf_frontend": [
-            stage("circuit", "RF circuit", "Design and sweep the RF circuit with compact models.", ["Xschem", "Qucs-S", "ngspice", "VACASK"], "circuit response"),
+            stage("circuit", "RF circuit", "Run the LC starter, then extend it with compact models and bias circuitry.", ["Xschem", "Qucs-S", "ngspice", "VACASK"], "circuit response", "ready"),
             stage("passives", "Passive structures", "Create inductors, lines, pads and layout structures.", ["gdsfactory", "KLayout", "GDS3D"], "passive GDS"),
             stage("em", "Electromagnetic solve", "Extract S-parameters and field behavior.", ["openEMS", "Palace", "gds2palace", "scikit-rf"], "Touchstone data"),
             stage("cosim", "Circuit / EM co-simulation", "Bring extracted passives back into circuit verification.", ["snp2le", "ngspice", "Qucs-S"], "co-simulation report"),

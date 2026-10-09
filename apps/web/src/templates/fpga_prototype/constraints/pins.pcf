@@ -1,0 +1,6 @@
+# Rellene con pines reales. No programe un ASC con pines sin asignar.
+# set_io clk <PIN_OSCILADOR>
+# set_io rst_n <PIN_RESET_ACTIVO_BAJO>
+# set_io button <PIN_BOTON_ACTIVO_ALTO>
+# set_io led <PIN_LED_HEARTBEAT>
+# set_io pwm_led <PIN_LED_PWM>

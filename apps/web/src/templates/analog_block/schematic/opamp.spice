@@ -1,0 +1,10 @@
+* Macromodelo lineal de UN polo, independiente del PDK.
+* A0 = ganancia DC; FP = polo dominante Hz; GBW aproximado A0*FP.
+* VREF fija el common-mode. Sin saturacion, ruido ni corriente de alimentacion.
+.subckt opamp vinp vinn vout vref params: A0=10000 FP=100
+EGAIN raw 0 vinp vinn {A0}
+RDOM raw pole 1k
+CDOM pole 0 {1/(6.283185307179586*1000*FP)}
+EBUF internal vref pole 0 1
+ROUT internal vout 20
+.ends opamp

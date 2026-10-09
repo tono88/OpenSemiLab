@@ -1,0 +1,16 @@
+[options]
+mode bmc
+depth 24
+
+[engines]
+smtbmc z3
+
+[script]
+read -formal -sv watchdog_timer.sv watchdog_properties.sv
+prep -top watchdog_properties
+async2sync
+dffunmap
+
+[files]
+rtl/watchdog_timer.sv
+verification/formal/watchdog_properties.sv

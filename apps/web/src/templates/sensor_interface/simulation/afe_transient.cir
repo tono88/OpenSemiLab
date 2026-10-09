@@ -1,0 +1,16 @@
+* Sensor: entrada 0.65 -> 0.85 V; salida asentada 1.45 -> 1.85 V.
+* R*C = 220 us. Entrada AC 1 permite medir ganancia del filtro.
+.include analog/afe.spice
+VCM vcm 0 1.65
+VREF vref 0 0.75
+VIN sensor 0 DC 0.65 AC 1 PULSE(0.65 0.85 1m 10u 10u 4m 10m)
+XAFE sensor adc vcm vref sensor_afe
+.op
+.tran 10u 12m
+.print tran v(sensor) v(adc)
+.meas tran settled_low FIND v(adc) AT=0.9m
+.meas tran settled_high FIND v(adc) AT=4m
+.ac dec 30 1 100k
+.print ac vdb(adc) vp(adc)
+.meas ac gain_low FIND vdb(adc) AT=10
+.end

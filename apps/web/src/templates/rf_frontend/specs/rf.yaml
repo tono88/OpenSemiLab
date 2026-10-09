@@ -1,0 +1,10 @@
+# Valores de partida de red concentrada; NO prestaciones de LNA fabricado.
+center_frequency_hz: 2.45e9
+frequency_sweep_hz: [1.0e8, 1.0e10]
+reference_impedance_ohm: 50
+series_inductance_h: 3.3e-9
+shunt_capacitance_f: 1.3e-12
+model: lumped_lossless_lc
+noise_figure: not_characterized
+nonlinearity: not_characterized
+pdk: '{{PDK}}'

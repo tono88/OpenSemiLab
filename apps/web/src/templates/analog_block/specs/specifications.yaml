@@ -1,0 +1,12 @@
+# Objetivos del macromodelo nominal, no especificaciones de silicio certificado.
+topology: non_inverting_single_pole_macromodel
+reference_v: 0.9
+input_dc_v: 0.92
+input_amplitude_v: 0.02
+closed_loop_gain_v_v: 5
+open_loop_dc_gain_v_v: 10000
+dominant_pole_hz: 100
+approx_unity_gain_hz: 1000000
+nominal_gain_tolerance_db: 0.15
+load_f: 1.0e-12
+pdk: '{{PDK}}'

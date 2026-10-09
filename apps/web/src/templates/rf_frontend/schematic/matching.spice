@@ -1,0 +1,6 @@
+* Red pasiva LC concentrada, no LNA transistor-level ni extraccion EM.
+* Puertos externos in/out. Z0=50 ohmios se aplica en el testbench.
+.subckt matching in out params: LVAL=3.3n CVAL=1.3p
+LMATCH in out {LVAL}
+CMATCH out 0 {CVAL}
+.ends matching

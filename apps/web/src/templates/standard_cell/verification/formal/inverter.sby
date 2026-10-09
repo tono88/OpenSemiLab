@@ -1,0 +1,14 @@
+[options]
+mode prove
+depth 2
+
+[engines]
+smtbmc z3
+
+[script]
+read -formal -sv inverter.sv inverter_properties.sv
+prep -top inverter_properties
+
+[files]
+rtl/inverter.sv
+verification/formal/inverter_properties.sv

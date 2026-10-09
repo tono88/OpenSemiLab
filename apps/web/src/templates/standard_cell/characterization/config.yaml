@@ -1,0 +1,10 @@
+# Plan de caracterizacion a completar con modelos PDK y esquinas reales.
+cell: inverter
+function: '!A'
+input_pin: A
+output_pin: Y
+supply_v: 1.8
+load_points_f: [1.0e-15, 5.0e-15, 1.0e-14]
+slew_points_s: [2.0e-11, 5.0e-11, 1.0e-10]
+temperature_c: [-40, 27, 125]
+model_status: generic_demonstration_not_foundry_qualified

@@ -1,0 +1,8 @@
+* Frente analogico IDEAL. Ganancia diferencial 2 y common-mode externo.
+* No modela saturacion/ruido: sustituir por circuito con PDK antes de fabricar.
+.subckt sensor_afe sensor adc vcm vref
+EAMP amp vcm sensor vref 2
+RFILT amp adc 2.2k
+CFILT adc 0 100n
+RLOAD adc 0 10Meg
+.ends sensor_afe

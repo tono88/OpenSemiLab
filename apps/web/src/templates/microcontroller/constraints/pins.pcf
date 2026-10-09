@@ -1,0 +1,6 @@
+# Wrapper top_fpga_top: complete con el pinout REAL de su placa iCE40.
+# No hay pines inventados ni configuracion certificada para una placa.
+# set_io clk <PIN_RELOJ>
+# set_io rst_n <PIN_RESET>
+# set_io led <PIN_LED>
+# set_io fault_led <PIN_LED_FALLO>

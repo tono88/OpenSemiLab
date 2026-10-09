@@ -1,0 +1,9 @@
+# Completar desde documentos vigentes del PDK, no desde esta plantilla.
+status: requires_pdk_geometry_and_materials
+pdk: '{{PDK}}'
+length_unit: um
+reference_impedance_ohm: 50
+substrate_permittivity: null
+substrate_conductivity_s_m: null
+metals: []
+dielectrics: []

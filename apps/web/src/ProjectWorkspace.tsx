@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { apiFetch } from './auth'
 import { trackEvent } from './serverProjects'
 import type { ProjectFile, StoredProject } from './projectStore'
+import { createProjectArchive } from './projectArchive'
 import type { Artifact, RunResult, RunSnapshot, SimulationData } from './eda-results'
 import SpiceViewer from './SpiceViewer'
 import WaveformViewer from './WaveformViewer'
@@ -110,7 +111,7 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
   const es=locale==='es'
   const initialManifest=readManifest(project)
   const initialPhysical=initialManifest.physical??{}
-  const initial=project.files.find(file=>file.path==='rtl/top.sv')?.path??project.files[0]?.path??''
+  const initial=initialManifest.starter?.version>=2?'README.md':(project.files.find(file=>file.path==='rtl/top.sv')?.path??project.files[0]?.path??'')
   const [selectedPath,setSelectedPath]=useState(initial)
   const [running,setRunning]=useState('')
   const [result,setResult]=useState<RunResult|null>(null)
@@ -120,7 +121,7 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
   const [tools,setTools]=useState<Record<string,ToolState>>({})
   const [privatePdk,setPrivatePdk]=useState<PrivatePdkStatus|null>(null)
   const [integrations,setIntegrations]=useState<ToolIntegration[]>([])
-  const [openSteps,setOpenSteps]=useState<Set<string>>(()=>new Set())
+  const [openSteps,setOpenSteps]=useState<Set<string>>(()=>new Set(['files']))
   const [historyOpen,setHistoryOpen]=useState(false)
   const [activeStage,setActiveStage]=useState<StageId>('files')
   const [stageResults,setStageResults]=useState<Partial<Record<StageId,RunResult>>>({})
@@ -169,7 +170,7 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
   const spiceEntry=spiceSources.find(file=>file.path===execution.spiceEntry)??spiceSources.find(file=>file.role==='testbench')??spiceSources[0]
   const adapterFiles=useMemo(()=>Object.fromEntries(Object.entries(ADAPTER_EXTENSIONS).map(([action,extensions])=>[action,project.files.filter(file=>{
     if(file.path==='project.json'||!extensions.some(ext=>file.path.toLowerCase().endsWith(ext)))return false
-    if(action==='formal')return file.role==='source'||file.path.toLowerCase().endsWith('.sby')
+    if(action==='formal')return file.role==='source'||file.path.toLowerCase().endsWith('.sby')||file.path.startsWith('verification/formal/')
     if(action==='fpga')return file.role==='source'||file.path.toLowerCase().endsWith('.pcf')
     return true
   })])),[project.files]) as Record<string,ProjectFile[]>
@@ -257,6 +258,14 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
   function exportProject() {
     const blob=new Blob([JSON.stringify(project,null,2)],{type:'application/json'})
     const url=URL.createObjectURL(blob);const link=document.createElement('a');link.href=url;link.download=`${project.name.replace(/[^A-Za-z0-9_-]+/g,'_')}.opensemilab.json`;link.click();URL.revokeObjectURL(url)
+  }
+
+  function exportSources() {
+    try {
+      const archive=createProjectArchive(project.files)
+      const url=URL.createObjectURL(new Blob([archive],{type:'application/zip'}))
+      const link=document.createElement('a');link.href=url;link.download=`${project.name.replace(/[^A-Za-z0-9_-]+/g,'_')}_sources.zip`;link.click();URL.revokeObjectURL(url)
+    } catch(reason) {setError(reason instanceof Error?reason.message:'Could not export source archive');setErrorStage('files')}
   }
 
   async function run(action:Action) {
@@ -410,7 +419,7 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
   const stageLabel:Record<StageId,string>={files:es?'Diseño':'Design',verification:es?'Verificación':'Verification',simulation:es?'Simulación':'Simulation',physical:'GDSII',results:es?'Resultados':'Results'}
 
   return <section className="project-workspace">
-    <div className="project-toolbar"><div><span>{es?'PROYECTO ACTIVO':'ACTIVE PROJECT'}</span><h2>{project.name}</h2><small>{project.kind} · {project.pdk} · {es?'guardado automático en este navegador':'autosaved in this browser'}</small></div><div><button onClick={exportProject}>{es?'Exportar':'Export'}</button><button onClick={onClose}>{es?'Cerrar':'Close'}</button></div></div>
+    <div className="project-toolbar"><div><span>{es?'PROYECTO ACTIVO':'ACTIVE PROJECT'}</span><h2>{project.name}</h2><small>{project.kind} · {project.pdk} · {project.files.length} {es?'archivos':'files'} · {es?'guardado automático en este navegador':'autosaved in this browser'}</small></div><div><button onClick={exportSources}>↓ {es?'Fuentes .zip':'Sources .zip'}</button><button onClick={exportProject}>{es?'Exportar JSON':'Export JSON'}</button><button onClick={onClose}>{es?'Cerrar':'Close'}</button></div></div>
     <div className={`workspace-worker ${worker}`}><i/>{worker==='online'?(es?'Flujo de diseño listo para ejecutar':'Design flow ready to run'):worker==='degraded'?(es?'Flujo conectado; algunas herramientas no están disponibles':'Flow connected; some tools are unavailable'):worker==='checking'?(es?'Comprobando herramientas del flujo…':'Checking flow tools…'):(es?'Flujo de ejecución desconectado':'Execution flow offline')}<button onClick={refreshCapabilities}>{es?'Comprobar':'Check'}</button></div>
     <details className="tool-inventory"><summary>{es?'Ver cobertura de herramientas':'View tool coverage'}<span>{integrations.filter(item=>item.available).length}/{integrations.length}</span></summary><ToolCoverage integrations={integrations} locale={locale}/></details>
     <section className="flow-overview"><div><span>{es?'FLUJO DEL PROYECTO':'PROJECT FLOW'}</span><b>{es?'Del diseño a los resultados en cinco etapas':'From design to results in five stages'}</b><small>{es?'Abra únicamente la etapa en la que desea trabajar.':'Open only the stage you want to work on.'}</small></div><button className={historyOpen?'active':''} onClick={()=>setHistoryOpen(value=>!value)}>{es?'Historial':'History'} <i>{runHistory.length}</i></button></section>

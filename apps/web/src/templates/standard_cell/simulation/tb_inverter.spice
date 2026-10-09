@@ -1,0 +1,16 @@
+* Transferencia DC y retardo de propagacion con carga explicita.
+.include models/generic_cmos.lib
+.include schematic/inverter.spice
+VDD vdd 0 1.8
+VIN a 0 DC 0 PULSE(0 1.8 0.2n 50p 50p 0.4n 1n)
+XINV a y vdd 0 inverter
+CL y 0 5f
+.dc VIN 0 1.8 0.01
+.print dc v(a) v(y)
+.meas dc output_high FIND v(y) AT=0
+.meas dc output_low FIND v(y) AT=1.8
+.tran 2p 3n
+.print tran v(a) v(y)
+.meas tran tphl TRIG v(a) VAL=0.9 RISE=1 TARG v(y) VAL=0.9 FALL=1
+.meas tran tplh TRIG v(a) VAL=0.9 FALL=1 TARG v(y) VAL=0.9 RISE=1
+.end

@@ -1,0 +1,6 @@
+* Inversor CMOS con transistores reales en simulacion, modelos genericos.
+* PMOS W=2*WN compensa aproximadamente la movilidad menor en este modelo.
+.subckt inverter A Y VDD VSS params: WN=1u WP=2u L=180n
+MP Y A VDD VDD PMOS_DEMO W={WP} L={L}
+MN Y A VSS VSS NMOS_DEMO W={WN} L={L}
+.ends inverter
