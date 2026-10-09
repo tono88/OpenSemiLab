@@ -15,7 +15,9 @@ set noaskquit
 save all
 op
 print v(in) v(out)
-ac dec 60 10 10Meg
+* Extender el barrido mas alla del punto de medida evita errores de redondeo
+* en el ultimo punto de la malla logaritmica.
+ac dec 60 10 20Meg
 meas ac gain_low FIND vdb(out) AT=100
 meas ac gain_high FIND vdb(out) AT=10Meg
 print vdb(out) vp(out)

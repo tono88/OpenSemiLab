@@ -7,10 +7,13 @@ import csv
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
 import unittest
+
+from worker import parse_spice_tables
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -44,8 +47,14 @@ class StarterExecutionTests(unittest.TestCase):
             # Temporary project directories disappear when the test finishes.
             log_path = root / "build/spice.log"
             diagnostics = log_path.read_text(errors="replace") if result.returncode and log_path.exists() else ""
-            self.assertEqual(result.returncode, 0, f"{name} / make {target}:\n{result.stdout}\n{result.stderr}\n{diagnostics[:16000]}")
+            focus = "\n".join(line for line in diagnostics.splitlines() if re.search(r"error|failed|^[a-z_][a-z0-9_]*\s*=", line, re.IGNORECASE))
+            self.assertEqual(result.returncode, 0, f"{name} / make {target}:\n{result.stdout}\n{result.stderr}\n{diagnostics[:4000]}\n{focus[:16000]}")
             self.assertIn("PASS", result.stdout + result.stderr)
+            if target == "spice":
+                # The same real output must also supply the portal's charts.
+                plots = parse_spice_tables(log_path.read_text())["plots"]
+                analyses = {plot["analysis"] for plot in plots}
+                self.assertGreaterEqual(len(analyses), 1 if name == "rf_frontend" else 2, str(analyses))
             return result.stdout
 
     def test_all_downloaded_projects_validate_their_manifest(self):
@@ -121,6 +130,16 @@ class StarterExecutionTests(unittest.TestCase):
         for name in ("sensor_interface", "analog_block", "rf_frontend", "standard_cell"):
             with self.subTest(project=name):
                 self.run_recipe(name, "spice")
+
+    @unittest.skipUnless(shutil.which("ngspice"), "ngspice required")
+    def test_real_macromodel_sweep_is_runnable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.materialize("analog_block", root)
+            result = subprocess.run(["python3", "scripts/sweep_macromodel.py"], cwd=root, capture_output=True, text=True, timeout=90)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("PASS", result.stdout)
+            self.assertTrue(all((root / f"build/macro_{name}.log").is_file() for name in ("low", "nominal", "high")))
 
     @unittest.skipUnless(shutil.which("ghdl"), "GHDL required")
     def test_real_vhdl_regressions_finish_and_assert_correct_behavior(self):
