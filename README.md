@@ -2,9 +2,9 @@
 
 **An open, progressive semiconductor laboratory for classrooms, universities, and research.**
 
-OpenSemiLab presents one coherent workflow on top of open scientific engines. A learner can explore a PN junction visually; an advanced user can inspect the same experiment's geometry, mesh, equations, solver controls, raw data, and provenance.
+OpenSemiLab presents one coherent workflow on top of open scientific engines. Its Device Lab contains 33 device, circuit and fabrication modules and 63 guided experiments, from carrier intuition to measurement fitting and reproducible studies.
 
-> Status: foundation release. The PN-junction vertical slice includes both the deterministic educational solver and an optional DEVSIM companion that executes on the user's computer.
+> Device Lab calculations and carrier animations run on the user's computer. The catalogue uses documented analytic/compact reference models; the silicon PN experiment also has an optional local DEVSIM companion.
 
 The Design Studio executes **real RTL lint, simulation, synthesis, batch SPICE simulation, and asynchronous RTL-to-GDSII implementation** inside an isolated IIC-OSIC-TOOLS worker. Projects persist in the browser as multi-file workspaces and can be exported or imported. RF/EM and mixed-signal co-simulation remain staged integrations and are visibly marked as such.
 
@@ -38,14 +38,16 @@ Open-source EDA and multiphysics tools are powerful, but they expose different i
 - Keep a bounded local execution history and compare implementation and simulation results.
 - Navigate active projects through a compact five-stage vertical wizard, with an explicit IIC-OSIC integration matrix.
 - Replay numeric simulation traces as animations, zoom them, and pan horizontally by dragging or using the window control.
-- Create and configure a 1D silicon PN junction.
-- Change doping, length, temperature, area, bias range, and mesh density.
-- Run a deterministic drift-diffusion-inspired educational approximation.
-- Inspect electrostatic potential, electric field, charge density, and I–V response.
-- Run reproducible educational parameter corners and a 20-sample Monte Carlo study with mean and min–max envelopes.
+- Explore silicon, transport, resistors, Hall effect, PN/PIN/Zener/Schottky/varactor/tunnel diodes, LED/photodiode/solar cells, BJT NPN/PNP, NMOS/PMOS/JFET, MOS capacitors, IGBT/SCR, CMOS/RC/RLC/rectifier circuits and SRH recombination.
+- Experiment with diffusion, implantation/annealing, oxidation, photolithography, etching, deposition and yield; follow a twelve-stage conceptual fabrication walkthrough.
+- Run analytic/compact models and bounded electron/hole/photon animations locally, keeping equations, units, physical limitations and numerical checks visible.
+- Inspect bands, carrier/field/charge profiles, I–V/C–V/Gummel/transfer families, optical power, Bode responses, process profiles and yield.
+- Run five-value parameter sweeps and seeded Monte Carlo studies with 10/20/40 samples, histograms, sample statistics and complete per-run export.
+- Import measurements with optional absolute uncertainties, compare residuals without extrapolation, fit weighted lines and extract diode ideality/saturation current.
+- Keep a notebook per guided experiment and export signed raw CSV, editable SVG figures and JSON bundles with an input fingerprint, references and actually executed parameters.
 - Switch between five depth modes without changing the underlying experiment.
 - Query engine capabilities and export a self-describing simulation result.
-- Select `devsim` in Advanced/Research mode; the browser detects a local companion automatically and keeps the compute load off the shared server.
+- Open local DEVSIM from the PN model in Advanced/Research mode; the browser detects a companion on the client computer and keeps the compute load off the shared server.
 - Validate the DEVSIM result on 51/101/201-node meshes and download a JSON reproducibility bundle with engine version, input hash, convergence settings, and validation evidence.
 
 ## Architecture
@@ -53,17 +55,26 @@ Open-source EDA and multiphysics tools are powerful, but they expose different i
 ```mermaid
 flowchart TD
     UI["Progressive web interface"] --> API["FastAPI orchestration API"]
+    UI --> BROWSER["Browser worker: 33 reference models"]
+    UI --> CANVAS["Local carrier animation"]
     UI --> LOCAL["Local DEVSIM companion"]
-    API --> MODEL["Shared experiment contract"]
-    MODEL --> EDU["Educational solver"]
+    API --> EDA["Isolated EDA worker"]
     LOCAL --> DEV["DEVSIM 2.11"]
-    MODEL --> FUTURE["MOOSE / FEniCSx / EDA adapters"]
-    EDU --> RESULT["Common result + provenance"]
+    BROWSER --> RESULT["Data + provenance + exports"]
     DEV --> RESULT
-    FUTURE --> RESULT
+    EDA --> RESULT
 ```
 
 The engine boundary is deliberate: copyleft tools can run as separate processes or services while OpenSemiLab keeps a stable, engine-neutral data contract. See [docs/LICENSING.md](docs/LICENSING.md).
+
+### Device Lab
+
+Open **Device Lab** from the persistent application navigation. The five depth
+modes expose guided experiments, complete parameters, studies, measurements and
+local TCAD controls. The notebook stays in this browser; export JSON to preserve
+it outside the device. Analytic consistency checks are not hardware calibration
+or foundry sign-off. See [docs/device-lab.md](docs/device-lab.md) for the complete
+catalogue, units, experiment workflow, model scope, statistics and references.
 
 ### IIC-OSIC integration scope
 
@@ -199,7 +210,7 @@ npm run dev
 
 ### Local DEVSIM companion
 
-DEVSIM is intentionally installed and executed on the user's computer. The companion binds only to `127.0.0.1:8787`; the web app sends DEVSIM experiments directly to it, while educational runs continue through the shared API.
+DEVSIM is intentionally installed and executed on the user's computer. The companion binds only to `127.0.0.1:8787`; the web app sends DEVSIM experiments directly to it. Device Lab reference calculations run in a browser worker; the existing educational PN API remains available for clients using that contract.
 
 The validation assumptions, canonical reference mapping, quantitative thresholds, and limitations are documented in [docs/devsim-validation.md](docs/devsim-validation.md).
 
@@ -215,7 +226,7 @@ Windows PowerShell:
 .\scripts\install-devsim-local.ps1
 ```
 
-Then open Device Lab, choose Advanced or Research, select DEVSIM, and press **Detect again**. A deployed portal origin can be authorized with `OPENSEMILAB_ALLOWED_ORIGINS=https://your-portal.example` before starting the companion. Linux requires BLAS/LAPACK runtime libraries; the install script automatically selects the common versioned library names when present.
+Then open Device Lab, select the PN junction, choose Advanced or Research and open **Local DEVSIM and mesh validation**. A deployed portal origin can be authorized with `OPENSEMILAB_ALLOWED_ORIGINS=https://your-portal.example` before starting the companion. Linux requires BLAS/LAPACK runtime libraries; the install script automatically selects the common versioned library names when present.
 
 ### Tests
 
@@ -223,6 +234,7 @@ Then open Device Lab, choose Advanced or Research, select DEVSIM, and press **De
 cd services/eda-worker && python -m unittest discover -s tests -v
 cd services/api && pytest
 cd services/devsim-worker && DEVSIM_MATH_LIBS=liblapack.so.3:libblas.so.3 pytest
+cd apps/web && npm test && npm run test:browser
 cd apps/web && npm run build
 ```
 
@@ -249,7 +261,7 @@ The built-in solver is intentionally labeled **educational**. It produces transp
 3. Normalize Xyce/CACE/openEMS numeric outputs into the animated chart schema and add curated Xschem round-trip templates.
 4. Extend DEVSIM validation from the PN baseline to calibrated reference measurements.
 5. Add optional server-side project storage and Git synchronization while retaining local JSON portability.
-6. Add MOS capacitor and MOSFET experiment templates.
+6. Extend the browser reference catalogue with calibrated device models and additional local TCAD geometries.
 7. Integrate Gmsh, VTK, and electro-thermal adapters.
 
 ## Contributing

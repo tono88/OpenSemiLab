@@ -15,12 +15,13 @@
 - Benchmarks against analytic limits and a published reference.
 - JSON/CSV export and experiment comparison.
 
-## M2 — Device laboratory
+## M2 — Device laboratory (browser reference catalogue implemented)
 
-- MOS capacitor and MOSFET templates.
-- 2D geometry and Gmsh integration.
-- VTK field visualization.
-- Local project history and reproducibility bundles.
+- 33 analytic/compact devices, circuits and fabrication modules; 63 guided experiments.
+- Client Worker computation, local carrier animations, notebooks and CSV/SVG/JSON export.
+- Seeded sweeps/Monte Carlo, measurement residuals and weighted parameter extraction.
+- Local PN DEVSIM reference remains available with documented mesh validation.
+- Next: calibrated additional TCAD devices, 2D geometry/Gmsh and VTK field visualization.
 
 ## M3 — Multiphysics
 

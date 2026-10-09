@@ -17,7 +17,14 @@ The React application owns progressive disclosure, educational narrative, experi
 The interface has two first-class workspaces:
 
 - **Design Studio** starts from an engineering outcome (SoC, sensor interface, analog/RF block, reusable IP, or FPGA prototype), then builds a staged toolchain and reproducible manifest.
-- **Device Lab** starts from semiconductor physics and exposes progressively deeper model and numerical controls.
+- **Device Lab** starts from semiconductor physics and fabrication, with 33 analytic/compact modules and 63 guides. A dedicated browser Worker calculates curves and seeded studies; Canvas renders bounded conceptual carrier animations. Both run on the client without simulation API calls. The laboratory is loaded lazily when opened.
+
+Device Lab owns a typed catalogue, parameter validation, model implementations,
+measurement import/regression, local notebooks and CSV/SVG/JSON export. Every
+calculation keeps its normalized executed input. Draft inputs do not relabel
+previous results. Device changes terminate the active Worker and use request
+IDs to ignore stale responses. Animation suspends its frame scheduling outside
+the viewport and in hidden tabs. See [device-lab.md](device-lab.md).
 
 Design Studio intentionally maps outcomes to tools instead of reproducing the desktop menus of IIC-OSIC-TOOLS. Native tools remain behind adapters and isolated workers.
 
@@ -27,7 +34,12 @@ FastAPI validates experiment contracts, discovers engine capabilities, selects a
 
 ### Engine adapters
 
-Adapters implement a small interface: capability metadata and `run(experiment)`. The current `EducationalPNEngine` is in-process. DEVSIM and later engines will be externalized behind the same boundary.
+Adapters implement a small interface: capability metadata and `run(experiment)`.
+The existing `EducationalPNEngine` remains in-process for API compatibility.
+The web Device Lab calculates its reference catalogue independently in a client
+Worker. Native DEVSIM is already externalized to the user's local companion at
+`127.0.0.1:8787`; its PN simulation, mesh-validation and bundle-comparison calls
+go directly from the browser to that companion, not through the shared API.
 
 ### IIC-OSIC execution worker
 
