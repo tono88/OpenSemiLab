@@ -26,7 +26,9 @@ test('colored editing keeps autosave, cursor, undo, indentation and file switchi
 test('find, wrapping and external changes remain usable', async ({ page }) => {
   await page.getByRole('button', { name: /Buscar/ }).click()
   await expect(page.locator('.cm-search')).toBeVisible()
-  await page.locator('.cm-search input[name=search]').fill('ready')
+  // CodeMirror commits searches on keyup/change; use actual keystrokes so
+  // the test exercises the same live highlighting as a person typing.
+  await page.locator('.cm-search input[name=search]').pressSequentially('ready')
   await expect(page.locator('.cm-searchMatch').first()).toBeVisible()
   await page.getByRole('button', { name: 'Ajustar líneas' }).click()
   await expect(page.locator('.code-editor .cm-content')).toHaveClass(/cm-lineWrapping/)
