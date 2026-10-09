@@ -12,5 +12,6 @@ import './result-artifacts.css'
 import './eda-visualizations.css'
 import './library-cards.css'
 import './pages.css'
+import './editor.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><Root /></React.StrictMode>)

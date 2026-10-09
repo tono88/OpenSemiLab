@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { apiFetch } from './auth'
-import ProjectWorkspace from './ProjectWorkspace'
 import PdkManager, { type PrivatePdk } from './PdkManager'
 import { createProject, loadProjects, normalizeProjectExecution, saveProjects, starterFiles, type StoredProject } from './projectStore'
 import { deleteServerProject, pushProject, trackEvent } from './serverProjects'
+
+// Load the editor and execution viewers when a project is opened.
+const ProjectWorkspace = lazy(() => import('./ProjectWorkspace'))
 
 interface Template { id: string; title: string; description: string; outputs: string[]; recommended_pdk: string; tags: string[] }
 interface Stage { id: string; title: string; purpose: string; tools: string[]; output: string; status: 'ready' | 'adapter_pending' | 'optional' }
@@ -124,7 +126,7 @@ export default function DesignStudio({ locale }: { locale: 'es' | 'en' }) {
     finally {setImportingGithub(false)}
   }
 
-  if(activeProject) return <main className="design-main workspace-active"><ProjectWorkspace project={activeProject} locale={locale} onChange={updateProject} onClose={()=>setActiveProjectId(null)}/></main>
+  if(activeProject) return <main className="design-main workspace-active"><Suspense fallback={<p className="editor-loading">{es?'Cargando editor…':'Loading editor…'}</p>}><ProjectWorkspace project={activeProject} locale={locale} onChange={updateProject} onClose={()=>setActiveProjectId(null)}/></Suspense></main>
 
   return <main className="design-main">
     <section className="intro design-intro"><div><p className="eyebrow">{es?'ESTUDIO DE DISEÑO / EDA ABIERTO':'DESIGN STUDIO / OPEN EDA'}</p><h1>{es?'Construya el sistema.':'Build the system.'}<br/><span>{es?'Inspeccione cada etapa.':'Inspect every stage.'}</span></h1><p>{es?'Elija qué desea crear. OpenSemiLab ensambla un flujo reproducible y fácil de enseñar, sin obligarle a comenzar desde una lista de aplicaciones.':'Choose what you want to create. OpenSemiLab assembles a teachable, reproducible flow instead of making you start from a list of applications.'}</p></div><div className="status-card"><span>{es?'FLUJO DE DISEÑO':'DESIGN FLOW'}</span><b>{es?'EDA ABIERTO':'OPEN EDA'}</b><p>{es?'RTL, SPICE y RTL→GDSII conectados para SKY130/GF180':'RTL, SPICE and RTL→GDSII connected for SKY130/GF180'}</p></div></section>

@@ -93,6 +93,26 @@ The specialized adapter cards infer their entry point from project files and rem
 
 FPGA projects may define `execution.fpga_top` independently from `execution.rtl_top`. This lets a reusable core keep its full internal bus interface while nextpnr implements a small board wrapper with only real package pins. The worker checks top-level I/O against known iCE40 package capacity before place-and-route and reports an actionable wrapper diagnostic.
 
+### Source editor and execution console
+
+Project files use a local CodeMirror editor with syntax highlighting for HDL,
+SPICE, Python, JSON, YAML, Markdown (including fenced code), Tcl, Makefiles and
+other supported source files. Line numbers, matching brackets, folding, search,
+undo/redo and indentation are available. Makefiles indent with tabs, Python with
+four spaces and other sources with two spaces. Escape followed by Tab leaves
+the editor; the line-wrap button keeps long lines readable.
+
+The result console and live physical-flow dock distinguish timestamps, tool
+tags, warnings, errors, successful checks, commands, paths and numeric values.
+Severity words remain visible alongside their colors. ANSI terminal control
+sequences are removed from the display; output is rendered as text. Long logs
+use a viewport, while Select all and Copy all operate on the complete output.
+The editor runs in the browser and is bundled with the portal, without a CDN.
+
+Validation: `cd apps/web && npm test` checks real language tokenization;
+`npm run test:browser` checks editing, undo, search, safe read-only logs and
+complete copying of large logs using Chromium.
+
 ### Documented, executable starter templates (v2)
 
 New projects include commented sources, self-checking testbenches, numerical

@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { apiFetch } from './auth'
+import CodeEditor from './CodeEditor'
+import LogOutput, { ConsoleLegend } from './LogOutput'
 
 const DEFAULT_RTL = `module top (
   input  logic       clk,
@@ -89,9 +91,9 @@ export default function DigitalWorkbench({ locale }: { locale: 'es' | 'en' }) {
   return <section className="workbench">
     <div className="section-heading"><span>04</span><div><h2>{es?'Banco de trabajo RTL':'RTL workbench'}</h2><p>{es?'Edite SystemVerilog real y ejecute las herramientas integradas de línea de comandos.':'Edit real SystemVerilog and run the integrated command-line tools.'}</p></div></div>
     <div className={`worker-state ${worker}`}><i/>{workerMessage}<button onClick={refresh}>{es?'Comprobar':'Check again'}</button></div>
-    <div className="editor-grid"><label><span>top.sv · {es?'diseño para síntesis':'synthesized design'}</span><textarea value={rtl} onChange={e=>setRtl(e.target.value)} spellCheck={false}/></label><label><span>tb.sv · {es?'banco de pruebas':'simulation testbench'}</span><textarea value={testbench} onChange={e=>setTestbench(e.target.value)} spellCheck={false}/></label></div>
+    <div className="editor-grid"><div className="workbench-editor"><span>top.sv · {es?'diseño para síntesis':'synthesized design'}</span><CodeEditor path="top.sv" value={rtl} onChange={setRtl} locale={locale}/></div><div className="workbench-editor"><span>tb.sv · {es?'banco de pruebas':'simulation testbench'}</span><CodeEditor path="tb.sv" value={testbench} onChange={setTestbench} locale={locale}/></div></div>
     <div className="action-bar"><button disabled={!lintAvailable||!!running} onClick={()=>run('lint')}><span>01</span>{running==='lint'?(es?'Ejecutando…':'Running…'):(es?'Analizar RTL':'Lint RTL')}<small>{lintAvailable?(tools.verible_lint?.available?'Verible':'Verilator'):(es?'No disponible':'Unavailable')}</small></button><button disabled={!simulationAvailable||!!running} onClick={()=>run('simulate')}><span>02</span>{running==='simulate'?(es?'Ejecutando…':'Running…'):(es?'Simular':'Simulate')}<small>{simulationAvailable?'Icarus Verilog':(es?'No disponible':'Unavailable')}</small></button><button disabled={!synthesisAvailable||!!running} onClick={()=>run('synthesize')}><span>03</span>{running==='synthesize'?(es?'Ejecutando…':'Running…'):(es?'Sintetizar':'Synthesize')}<small>{synthesisAvailable?'Yosys':(es?'No disponible':'Unavailable')}</small></button></div>
     {error&&<p className="error">{error}</p>}
-    {result&&<div className="console"><div><span>{result.engine} · job {result.job_id} · {result.duration_ms} ms</span><b className={result.success?'success':'failed'}>{result.success?(es?'CORRECTO':'PASSED'):(es?'FALLÓ':'FAILED')} · EXIT {result.exit_code}</b></div><pre>{result.output||(es?'El comando terminó sin salida en consola.':'Command completed without console output.')}</pre>{result.artifacts.map(artifact=><button key={artifact.name} onClick={()=>download(artifact)}>{es?'Descargar':'Download'} {artifact.name} ↓</button>)}</div>}
+    {result&&<div className="console"><div><span>{result.engine} · job {result.job_id} · {result.duration_ms} ms</span><b className={result.success?'success':'failed'}>{result.success?(es?'CORRECTO':'PASSED'):(es?'FALLÓ':'FAILED')} · EXIT {result.exit_code}</b></div><ConsoleLegend locale={locale}/><LogOutput text={result.output||(es?'El comando terminó sin salida en consola.':'Command completed without console output.')} locale={locale}/>{result.artifacts.map(artifact=><button key={artifact.name} onClick={()=>download(artifact)}>{es?'Descargar':'Download'} {artifact.name} ↓</button>)}</div>}
   </section>
 }
