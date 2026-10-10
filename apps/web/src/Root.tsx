@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import App from './App'
 import { AuthProvider, useAuth } from './auth'
 import { Landing } from './pages/Landing'
@@ -9,6 +9,8 @@ import { Verify } from './pages/Verify'
 import { Admin } from './pages/Admin'
 import { Gallery } from './pages/Gallery'
 import { syncProjects } from './serverProjects'
+
+const Guide = lazy(() => import('./pages/Guide'))
 
 function route(): string {
   const h = location.hash.replace(/^#/, '') || '/'
@@ -51,6 +53,7 @@ function Router() {
   const r = route()
   if (r === '/' || r === '') return <Landing />
   if (r === '/equipo') return <Team />
+  if (r.startsWith('/guia')) return <Suspense fallback={<p>Cargando guía…</p>}><Guide /></Suspense>
   if (r === '/terminos') return <Terms />
   if (r === '/privacidad') return <Privacy />
   if (r === '/login') return <Login />

@@ -11,6 +11,8 @@ import RunHistory from './RunHistory'
 import ToolCoverage, { type ToolIntegration } from './ToolCoverage'
 import CodeEditor from './CodeEditor'
 import LogOutput, { ConsoleLegend, type LogOutputHandle } from './LogOutput'
+import { usePhysicalJob } from './usePhysicalJob'
+import PhysicalJobStatus, { duration, physicalJobLabel } from './PhysicalJobStatus'
 
 type ArtifactKind='layout'|'netlist'|'timing'|'waveform'|'report'|'configuration'|'other'
 
@@ -115,7 +117,7 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
   const initialPhysical=initialManifest.physical??{}
   const initial=initialManifest.starter?.version>=2?'README.md':(project.files.find(file=>file.path==='rtl/top.sv')?.path??project.files[0]?.path??'')
   const [selectedPath,setSelectedPath]=useState(initial)
-  const [running,setRunning]=useState('')
+  const [runAction,setRunning]=useState('')
   const [result,setResult]=useState<RunResult|null>(null)
   const [physicalResult,setPhysicalResult]=useState<RunResult|null>(null)
   const [error,setError]=useState('')
@@ -144,13 +146,16 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
   const [fpgaDevice,setFpgaDevice]=useState(String(initialManifest.adapters?.fpga?.device??'up5k'))
   const [fpgaPackage,setFpgaPackage]=useState(String(initialManifest.adapters?.fpga?.package??'sg48'))
   const [fpgaFrequency,setFpgaFrequency]=useState(Number(initialManifest.adapters?.fpga?.frequency_mhz??12))
-  const [physicalStatus,setPhysicalStatus]=useState('')
-  const [physicalElapsed,setPhysicalElapsed]=useState(0)
-  const [physicalLiveOutput,setPhysicalLiveOutput]=useState('')
-  const [physicalStage,setPhysicalStage]=useState('preparing')
-  const [physicalJobId,setPhysicalJobId]=useState('')
+  const physicalRun=usePhysicalJob(project.id,locale,active=>{
+    setRunning(previous=>active?'physical':previous==='physical'?'':previous)
+    if(active){setActiveStage('physical');setErrorStage('physical');setConsoleOpen(true);setOpenSteps(new Set(['physical']))}
+  },data=>acceptResult(data,'physical'))
+  const running=physicalRun.active?'physical':runAction
+  const physicalElapsed=physicalRun.job?.elapsed_seconds??0
+  const physicalLiveOutput=physicalRun.job?.live_output||physicalRun.job?.result?.output||''
+  const physicalStage=physicalRun.job?.stage??'preparing'
+  const physicalStatus=`${physicalJobLabel(physicalRun.job,es)}${physicalRun.job?` · ${physicalRun.job.job_id}`:''}${physicalRun.job?.status==='queued'?` · ${physicalRun.job.jobs_ahead} ${es?'trabajos antes del suyo':'jobs ahead of yours'}`:''}`
   const historyKey=`opensemilab.runs.${project.id}`
-  const activePhysicalKey=`opensemilab.activePhysical.${project.id}`
   const [runHistory,setRunHistory]=useState<RunSnapshot[]>(()=>{
     try {return JSON.parse(localStorage.getItem(historyKey)??'[]')}
     catch {return []}
@@ -202,19 +207,9 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
     setFpgaTop(String(manifest.execution?.fpga_top??manifest.execution?.rtl_top??'top'))
   },[project.id,execution.fpgaTop])
   useEffect(()=>{
-    if(running!=='physical')return
-    const started=Date.now()-physicalElapsed*1000
-    const timer=window.setInterval(()=>setPhysicalElapsed(Math.floor((Date.now()-started)/1000)),1000)
-    return ()=>window.clearInterval(timer)
-  },[running])
-  useEffect(()=>{
     try {setRunHistory(JSON.parse(localStorage.getItem(historyKey)??'[]'))}
     catch {setRunHistory([])}
   },[historyKey])
-  useEffect(()=>{
-    const jobId=localStorage.getItem(activePhysicalKey)
-    if(jobId&&!running)void pollPhysicalJob(jobId)
-  },[activePhysicalKey])
 
   function acceptResult(data:RunResult,action:string) {
     setResult(data)
@@ -316,55 +311,15 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
     finally {setRunning('')}
   }
 
-  async function pollPhysicalJob(jobId:string) {
-    setActiveStage('physical');setErrorStage('physical');setConsoleOpen(true);setRunning('physical');setPhysicalJobId(jobId);setError('')
-    try {
-      while(true) {
-        const statusResponse=await apiFetch(`/api/v1/eda/jobs/${jobId}`)
-        const job=await statusResponse.json();if(!statusResponse.ok) throw new Error(job.detail??'Could not read physical job')
-        if(typeof job.elapsed_seconds==='number')setPhysicalElapsed(job.elapsed_seconds)
-        if(typeof job.live_output==='string')setPhysicalLiveOutput(job.live_output)
-        if(typeof job.stage==='string')setPhysicalStage(job.stage)
-        const activity=typeof job.last_activity_seconds_ago==='number'?`${es?'actividad hace':'activity'} ${job.last_activity_seconds_ago}s`:typeof job.last_output_seconds_ago==='number'?`${es?'última salida hace':'last output'} ${job.last_output_seconds_ago}s`:''
-        const resources=typeof job.cpu_percent==='number'?`CPU ${job.cpu_percent}% · RAM ${job.memory_mb??0} MB${typeof job.disk_free_mb==='number'?` · ${es?'disco libre':'disk free'} ${job.disk_free_mb} MB`:''}`:''
-        const stage=job.stage_label?`${job.stage_label} · ${job.tool??'LibreLane'}`:''
-        const alive=job.process_alive?(es?'proceso activo':'process alive'):job.status
-        setPhysicalStatus(`${es?'Trabajo':'Job'} ${jobId} · ${alive}${stage?` · ${stage}`:''}${activity?` · ${activity}`:''}${resources?` · ${resources}`:''}`)
-        if(['completed','failed','cancelled'].includes(job.status)) {
-          localStorage.removeItem(activePhysicalKey)
-          if(job.result)acceptResult(job.result,'physical');else throw new Error(job.error??'Physical implementation failed')
-          return
-        }
-        await new Promise(resolve=>window.setTimeout(resolve,2000))
-      }
-    } catch(reason) {setError(reason instanceof Error?reason.message:'Physical implementation failed')}
-    finally {setRunning('');setPhysicalJobId('')}
-  }
-
-  async function cancelPhysical() {
-    if(!physicalJobId)return
-    setPhysicalStatus(`${es?'Trabajo':'Job'} ${physicalJobId} · ${es?'cancelando de forma segura…':'cancelling safely…'}`)
-    try {
-      const response=await apiFetch(`/api/v1/eda/jobs/${physicalJobId}/cancel`,{method:'POST'})
-      const body=await response.json();if(!response.ok)throw new Error(body.detail??'Could not cancel physical job')
-    } catch(reason) {setError(reason instanceof Error?reason.message:'Could not cancel physical job')}
-  }
-
   async function runPhysical() {
-    setActiveStage('physical');setErrorStage('physical');setConsoleOpen(true);setPhysicalElapsed(0);setPhysicalLiveOutput('');setPhysicalStage('preparing');setRunning('physical');setPhysicalStatus(es?'Preparando y enviando el trabajo…':'Preparing and submitting job…');setError('');setResult(null)
+    setActiveStage('physical');setErrorStage('physical');setConsoleOpen(true);setError('');setResult(null);setPhysicalResult(null)
     const sources=Object.fromEntries(rtlSources.map(file=>[file.path,file.content]))
     const physical={pdk:project.pdk,clock_port:clockPort,clock_period_ns:clockPeriod,floorplan_mode:floorplanMode,die_width_um:dieWidth,die_height_um:dieHeight,core_utilization_pct:utilization,timing_effort:timingEffort,sdc_content:projectSdc?.content}
     const currentManifest=readManifest(project)
     onChange({...project,updatedAt:new Date().toISOString(),files:project.files.map(file=>file.path==='project.json'?{...file,content:JSON.stringify({...currentManifest,physical},null,2)+'\n'}:file)})
     try {
-      const response=await apiFetch('/api/v1/eda/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-        action:'physical',top:execution.rtlTop??'top',sources,
-        physical,
-      })})
-      const created=await response.json();if(!response.ok) throw new Error(created.detail??'Could not start physical implementation')
-      localStorage.setItem(activePhysicalKey,created.job_id)
-      setPhysicalStatus(`${es?'Trabajo':'Job'} ${created.job_id} · ${es?'en cola':'queued'}`)
-      await pollPhysicalJob(created.job_id);trackEvent('librelane','physical',project.id,{pdk:project.pdk})
+      await physicalRun.submit({action:'physical',top:execution.rtlTop??'top',sources,physical})
+      trackEvent('librelane','physical',project.id,{pdk:project.pdk})
     } catch(reason) {setError(reason instanceof Error?reason.message:'Physical implementation failed')}
   }
 
@@ -420,10 +375,10 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
   const physicalSupported=['sky130A','gf180mcuD'].includes(project.pdk)||Boolean(privatePdk?.readiness.physical)
   const stageLabel:Record<StageId,string>={files:es?'Diseño':'Design',verification:es?'Verificación':'Verification',simulation:es?'Simulación':'Simulation',physical:'GDSII',results:es?'Resultados':'Results'}
   const isActiveRun=!!running&&ACTION_STAGE[running as Action|'physical']===activeStage
-  const dockOutput=isActiveRun?(running==='physical'?`${physicalStatus}\n${es?'Tiempo transcurrido':'Elapsed'}: ${physicalElapsed}s\n${physicalLiveOutput||(es?'Esperando la primera salida de LibreLane…':'Waiting for the first LibreLane output…')}`:`${es?'Ejecutando':'Running'} ${running}…\n${es?'La salida aparecerá aquí al terminar.':'Output will appear here when the run completes.'}`):error&&errorStage===activeStage?error:dockResult?.output||(es?'Esta etapa todavía no tiene una salida. Ejecute una acción para verla aquí.':'This stage has no output yet. Run an action to see it here.')
+  const dockOutput=isActiveRun?(running==='physical'?`${physicalStatus}\n${physicalRun.job?.status==='queued'?`${es?'Tiempo en cola':'Queue time'}: ${duration(physicalRun.job.waiting_seconds)}`:`${es?'Tiempo ejecutando':'Execution time'}: ${duration(physicalElapsed)}`}\n${physicalRun.notice}\n${physicalLiveOutput||(physicalRun.job?.status==='queued'?(es?'El flujo empezará automáticamente al llegar su turno. Puede cancelar desde la tarjeta de estado.':'The flow will start automatically on your turn. Cancel from the status card.'):(es?'Esperando la primera salida de LibreLane…':'Waiting for the first LibreLane output…'))}`:`${es?'Ejecutando':'Running'} ${running}…\n${es?'La salida aparecerá aquí al terminar.':'Output will appear here when the run completes.'}`):physicalRun.job?.status==='cancelled'&&activeStage==='physical'?`${physicalStatus}\n${physicalLiveOutput}`:error&&errorStage===activeStage?error:dockResult?.output||(es?'Esta etapa todavía no tiene una salida. Ejecute una acción para verla aquí.':'This stage has no output yet. Run an action to see it here.')
 
   return <section className="project-workspace">
-    <div className="project-toolbar"><div><span>{es?'PROYECTO ACTIVO':'ACTIVE PROJECT'}</span><h2>{project.name}</h2><small>{project.kind} · {project.pdk} · {project.files.length} {es?'archivos':'files'} · {es?'guardado automático en este navegador':'autosaved in this browser'}</small></div><div><button onClick={exportSources}>↓ {es?'Fuentes .zip':'Sources .zip'}</button><button onClick={exportProject}>{es?'Exportar JSON':'Export JSON'}</button><button onClick={onClose}>{es?'Cerrar':'Close'}</button></div></div>
+    <div className="project-toolbar"><div><span>{es?'PROYECTO ACTIVO':'ACTIVE PROJECT'}</span><h2>{project.name}</h2><small>{project.kind} · {project.pdk} · {project.files.length} {es?'archivos':'files'} · {es?'guardado automático en este navegador':'autosaved in this browser'}</small></div><div><a className="workspace-help" href="#/guia?seccion=design" target="_blank" rel="noreferrer">{es?"Cómo usar":"How to use"} ↗</a><button onClick={exportSources}>↓ {es?'Fuentes .zip':'Sources .zip'}</button><button onClick={exportProject}>{es?'Exportar JSON':'Export JSON'}</button><button onClick={onClose}>{es?'Cerrar':'Close'}</button></div></div>
     <div className={`workspace-worker ${worker}`}><i/>{worker==='online'?(es?'Flujo de diseño listo para ejecutar':'Design flow ready to run'):worker==='degraded'?(es?'Flujo conectado; algunas herramientas no están disponibles':'Flow connected; some tools are unavailable'):worker==='checking'?(es?'Comprobando herramientas del flujo…':'Checking flow tools…'):(es?'Flujo de ejecución desconectado':'Execution flow offline')}<button onClick={refreshCapabilities}>{es?'Comprobar':'Check'}</button></div>
     <details className="tool-inventory"><summary>{es?'Ver cobertura de herramientas':'View tool coverage'}<span>{integrations.filter(item=>item.available).length}/{integrations.length}</span></summary><ToolCoverage integrations={integrations} locale={locale}/></details>
     <section className="flow-overview"><div><span>{es?'FLUJO DEL PROYECTO':'PROJECT FLOW'}</span><b>{es?'Del diseño a los resultados en cinco etapas':'From design to results in five stages'}</b><small>{es?'Abra únicamente la etapa en la que desea trabajar.':'Open only the stage you want to work on.'}</small></div><button className={historyOpen?'active':''} onClick={()=>setHistoryOpen(value=>!value)}>{es?'Historial':'History'} <i>{runHistory.length}</i></button></section>
@@ -446,7 +401,7 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
       {rtlSources.length>0&&physicalSupported?<div className="physical-panel">
         <div className="physical-toolchain">LibreLane · Yosys · OpenROAD · OpenSTA · Magic · Netgen · KLayout</div>
         <div className="physical-steps">{['synthesis','floorplan','placement','cts','routing','signoff'].map((stage,index)=>{const current=['synthesis','floorplan','placement','cts','routing','signoff'].indexOf(physicalStage);const label=stage==='cts'?'CTS':stage==='signoff'?'Sign-off':stage[0].toUpperCase()+stage.slice(1);return <i className={physicalResult?.success||running==='physical'&&current>index?'done':running==='physical'&&physicalStage===stage?'active':''} key={stage}><span>{String(index+1).padStart(2,'0')}</span>{label}</i>})}</div>
-        <div className="physical-config">
+        <fieldset className="physical-config" disabled={physicalRun.active}>
           <label>{es?'Tamaño del dado':'Die sizing'}<select value={floorplanMode} onChange={event=>setFloorplanMode(event.target.value as 'auto'|'manual')}><option value="auto">{es?'Automático · recomendado':'Automatic · recommended'}</option><option value="manual">{es?'Manual · experto':'Manual · expert'}</option></select></label>
           <label>{es?'Puerto de reloj':'Clock port'}<input value={clockPort} onChange={event=>setClockPort(event.target.value)}/></label>
           <label>{es?'Período (ns)':'Period (ns)'}<input type="number" min="0.1" max="1000" step="0.1" value={clockPeriod} onChange={event=>setClockPeriod(Number(event.target.value))}/><span className="period-presets">{[20,25,30].map(period=><button type="button" className={clockPeriod===period?'active':''} onClick={()=>setClockPeriod(period)} key={period}>{period}</button>)}</span></label>
@@ -454,16 +409,18 @@ export default function ProjectWorkspace({project,locale,onChange,onClose}:{proj
           <label>{es?'Alto (µm)':'Height (µm)'}<input type="number" min="30" max="5000" value={dieHeight} disabled={floorplanMode==='auto'} onChange={event=>setDieHeight(Number(event.target.value))}/></label>
           <label>{es?'Utilización (%)':'Utilization (%)'}<input type="number" min="5" max="80" value={utilization} onChange={event=>setUtilization(Number(event.target.value))}/></label>
           <label>{es?'Cierre de timing':'Timing closure'}<select value={timingEffort} onChange={event=>setTimingEffort(event.target.value as 'balanced'|'aggressive')}><option value="balanced">{es?'Balanceado':'Balanced'}</option><option value="aggressive">{es?'Agresivo · más lento':'Aggressive · slower'}</option></select></label>
-          <button className={running==='physical'?'running':''} disabled={!!running||worker==='offline'||!tools.librelane?.available} onClick={runPhysical}>{running==='physical'?<><span className="run-spinner"/>{es?'Ejecutando flujo RTL → GDSII':'Running RTL → GDSII flow'}<small>{physicalElapsed}s · {es?'puede cerrar o recargar; el trabajo seguirá activo':'you may close or reload; the job will remain active'}</small></>:[<span key="label">{es?'Ejecutar flujo completo RTL → GDSII':'Run complete RTL → GDSII flow'}</span>,<small key="tool">LibreLane Classic · {es?'SDC explícito y sign-off':'explicit SDC and sign-off'}</small>]}</button>
-        </div>
+          <button className={running==='physical'?'running':''} disabled={!!running||worker==='offline'||!tools.librelane?.available} onClick={runPhysical}>{running==='physical'?<>{physicalRun.job?.status!=='queued'&&<span className="run-spinner"/>}{physicalJobLabel(physicalRun.job,es)}<small>{physicalRun.job?.status==='queued'?`${physicalRun.job.jobs_ahead} ${es?'trabajos antes del suyo':'jobs ahead of yours'}`:duration(physicalElapsed)} · {es?'turno guardado':'place saved'}</small></>:[<span key="label">{es?'Ejecutar flujo completo RTL → GDSII':'Run complete RTL → GDSII flow'}</span>,<small key="tool">LibreLane Classic · {es?'SDC explícito y sign-off':'explicit SDC and sign-off'}</small>]}</button>
+        </fieldset>
+        <p className="physical-help">{es?'Revise RTL y simulación antes de reservar un turno. Las fuentes y el SDC se copian al enviar.':'Review RTL and simulation before reserving a slot. Sources and SDC are copied at submission.'} <a href="#/guia?seccion=physical" target="_blank" rel="noreferrer">{es?'Ver guía completa':'Read full guide'} ↗</a></p>
+        <PhysicalJobStatus {...physicalRun} locale={locale} onCancel={()=>void physicalRun.cancel()}/>
         <p className="physical-guidance">{floorplanMode==='auto'?(es?'LibreLane calculará el dado después de sintetizar, usando el área real de celdas y la utilización objetivo. Es recomendable para cualquier diseño digital de celdas estándar sin macros rígidas.':'LibreLane will size the die after synthesis from actual cell area and target utilization. This is recommended for standard-cell digital designs without hard macros.'):(es?'El tamaño manual se reserva para integración con macros, restricciones de encapsulado o un floorplan previamente definido.':'Manual sizing is intended for macro integration, package constraints, or a predefined floorplan.')} · {projectSdc?(es?`Usando SDC del proyecto: ${projectSdc.path}`:`Using project SDC: ${projectSdc.path}`):(es?'SDC automático: solo reloj; agregue constraints.sdc para I/O y cargas.':'Automatic SDC: clock only; add constraints.sdc for I/O and loads.')}</p>
         {physicalResult?.summary?.recommended_die_width_um&&physicalResult.summary.recommended_die_height_um&&<p className="physical-recommendation"><span>{es?'Última recomendación':'Latest recommendation'}: {physicalResult.summary.recommended_die_width_um} × {physicalResult.summary.recommended_die_height_um} µm</span><button onClick={()=>{setFloorplanMode('manual');setDieWidth(physicalResult.summary!.recommended_die_width_um!);setDieHeight(physicalResult.summary!.recommended_die_height_um!)}}>{es?'Aplicar manualmente':'Apply manually'}</button></p>}
-        {physicalStatus&&<p className="physical-status" aria-live="polite"><span className={running==='physical'?'status-pulse':''}/>{physicalStatus}{running==='physical'?` · ${physicalElapsed}s`:''}{running==='physical'&&physicalJobId&&<button className="cancel-job" onClick={cancelPhysical}>{es?'Cancelar':'Cancel'}</button>}</p>}
+
         {physicalGds&&<div className="gds3d-action"><div><b>{es?'GDSII listo':'GDSII ready'}</b><small>{physicalGds.name}</small></div><button disabled={!!running||!tools.gds3d?.available} onClick={()=>runAdapter('gds3d')}>{running==='gds3d'?(es?'Validando…':'Validating…'):(es?'Validar en GDS3D':'Validate in GDS3D')}<small>{es?'El visor interactivo está en Resultados':'Interactive viewer is in Results'}</small></button></div>}
       </div>:<div className="adapter-message">{project.pdk.startsWith('private:')?(privatePdk?(es?'El PDK privado está asociado al proyecto, pero todavía necesita un adaptador LibreLane/OpenPDKs validado para ejecutar RTL→GDSII. Revise su matriz en Tecnologías privadas.':'The private PDK is linked to this project, but it still needs a validated LibreLane/OpenPDKs adapter to run RTL→GDSII. Review its matrix under Private technologies.'):(es?'El PDK privado referenciado ya no está instalado en este servidor.':'The referenced private PDK is no longer installed on this server.')):(es?'Disponible para proyectos RTL con SKY130, GF180 o un PDK privado con adaptador validado.':'Available for RTL projects using SKY130, GF180, or a private PDK with a validated adapter.')}</div>}
     </WizardStep>
     <WizardStep id="results" number="05" title={es?'Resultados y análisis':'Results and analysis'} summary={es?'Gráficas, ondas, layout, consola y artefactos':'Plots, waveforms, layout, console, and artifacts'} open={openSteps.has('results')} onToggle={()=>toggleStep('results')} status={result?.formal_status==='unknown'||result?.summary?.signoff_status==='review'?'REVIEW':result?.summary?.signoff_status==='fail'?'FAIL':result?.success?'PASS':result?'FAIL':undefined}>{error&&<p className="error">{error}</p>}{result?.simulation&&result.simulation.plots.length>0&&<SpiceViewer data={result.simulation} locale={locale}/>} {waveform&&<WaveformViewer content={waveform.content} locale={locale}/>} {dashboardResult?.summary&&<PhysicalDashboard summary={dashboardResult.summary} artifacts={dashboardResult.artifacts} locale={locale} onApplyRecommendedDie={(width,height)=>{setDieWidth(width);setDieHeight(height);goStep('physical')}}/>} {result?<div className="console"><div className="console-header"><span>{result.engine} · {result.duration_ms} ms{result.pdk?` · ${result.pdk}`:''}</span><b className={result.formal_status==='unknown'?'unknown':result.success?'success':'failed'}>{result.formal_status==='unknown'?(es?'INCONCLUSO':'INCONCLUSIVE'):result.success?(es?'CORRECTO':'PASSED'):(es?'FALLÓ':'FAILED')} · EXIT {result.exit_code}</b></div><details className="console-output" open={!result.success}><summary>{es?'Registro de ejecución':'Execution log'}</summary><div className="console-tools"><button onClick={()=>selectConsole('result-console-output')}>{es?'Seleccionar todo':'Select all'}</button><button onClick={()=>void copyConsole('result-console-output')}>{copiedConsole==='result-console-output'?(es?'Copiado':'Copied'):(es?'Copiar todo':'Copy all')}</button></div><ConsoleLegend locale={locale}/><LogOutput ref={resultLog} id="result-console-output" text={result.output||(es?'La herramienta terminó sin salida.':'The tool completed without output.')} locale={locale}/></details>{result.artifacts.length>0&&<ArtifactBrowser artifacts={result.artifacts} locale={locale} onDownload={downloadArtifact}/>}</div>:!error&&!dashboardResult&&<div className="empty-results">{es?'Ejecute una etapa para ver aquí todos sus resultados.':'Run a stage to see all of its results here.'}</div>}</WizardStep>
     </div>
-    <aside className={`result-dock ${consoleOpen?'open':''}`} aria-live="polite"><div className="result-dock-bar"><div><span>{stageLabel[activeStage]}</span><b>{isActiveRun?(es?'EJECUTANDO':'RUNNING'):dockResult?.engine??(es?'Sin ejecución todavía':'No run yet')}</b></div>{dockResult&&<em className={dockResult.formal_status==='unknown'?'unknown':dockResult.success?'success':'failed'}>{dockResult.formal_status==='unknown'?(es?'INCONCLUSO':'INCONCLUSIVE'):dockResult.success?'PASS':'FAIL'}{dockResult.exit_code!==undefined?` · EXIT ${dockResult.exit_code}`:''}</em>}<button onClick={()=>selectConsole('dock-console-output')}>{es?'Seleccionar todo':'Select all'}</button><button onClick={()=>void copyConsole('dock-console-output')}>{copiedConsole==='dock-console-output'?(es?'Copiado':'Copied'):(es?'Copiar todo':'Copy all')}</button><button onClick={()=>goStep('results')}>{es?'Abrir análisis':'Open analysis'}</button><button className="dock-toggle" onClick={()=>setConsoleOpen(value=>!value)} aria-label={consoleOpen?(es?'Minimizar consola':'Minimize console'):(es?'Abrir consola':'Open console')}>{consoleOpen?'⌄':'⌃'}</button></div>{consoleOpen&&<><ConsoleLegend locale={locale}/><LogOutput ref={dockLog} id="dock-console-output" text={dockOutput} follow={isActiveRun&&running==='physical'} locale={locale}/></>}</aside>
+    <aside className={`result-dock ${consoleOpen?'open':''}`} aria-live="polite"><div className="result-dock-bar"><div><span>{stageLabel[activeStage]}</span><b>{isActiveRun?(running==='physical'&&physicalRun.job?.status==='queued'?(es?'EN COLA':'QUEUED'):es?'EJECUTANDO':'RUNNING'):dockResult?.engine??(es?'Sin ejecución todavía':'No run yet')}</b></div>{dockResult&&!isActiveRun&&<em className={dockResult.formal_status==='unknown'?'unknown':dockResult.success?'success':'failed'}>{dockResult.formal_status==='unknown'?(es?'INCONCLUSO':'INCONCLUSIVE'):dockResult.success?'PASS':'FAIL'}{dockResult.exit_code!==undefined?` · EXIT ${dockResult.exit_code}`:''}</em>}<button onClick={()=>selectConsole('dock-console-output')}>{es?'Seleccionar todo':'Select all'}</button><button onClick={()=>void copyConsole('dock-console-output')}>{copiedConsole==='dock-console-output'?(es?'Copiado':'Copied'):(es?'Copiar todo':'Copy all')}</button><button onClick={()=>goStep('results')}>{es?'Abrir análisis':'Open analysis'}</button><button className="dock-toggle" onClick={()=>setConsoleOpen(value=>!value)} aria-label={consoleOpen?(es?'Minimizar consola':'Minimize console'):(es?'Abrir consola':'Open console')}>{consoleOpen?'⌄':'⌃'}</button></div>{consoleOpen&&<><ConsoleLegend locale={locale}/><LogOutput ref={dockLog} id="dock-console-output" text={dockOutput} follow={isActiveRun&&running==='physical'} locale={locale}/></>}</aside>
   </section>
 }

@@ -32,6 +32,19 @@ Design Studio intentionally maps outcomes to tools instead of reproducing the de
 
 FastAPI validates experiment contracts, discovers engine capabilities, selects adapters, normalizes output, and attaches provenance.
 
+Heavy RTL→GDSII jobs use the single EDA worker's durable FIFO queue. Admission
+checks cgroup-normalized CPU, host load, memory headroom and disk, with one
+running physical flow by default. The API derives ownership from the verified
+session; job status, recovery and cancellation remain account-scoped. Queued
+records survive restarts; interrupted running flows are reported for user review.
+The browser recovers active jobs, distinguishes queue wait from runtime and
+retries status queries without resubmitting. See [physical-queue.md](physical-queue.md).
+
+The public `#/guia` route provides a lazy-loaded ES/EN portal manual with search,
+chapter navigation and annotated screenshots of actual screens using explicit
+demonstration fixtures. Its chapters cover both the design workflow and client
+device experiments, including local DEVSIM and administrator-only SMTP.
+
 ### Engine adapters
 
 Adapters implement a small interface: capability metadata and `run(experiment)`.

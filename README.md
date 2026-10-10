@@ -4,6 +4,13 @@
 
 OpenSemiLab presents one coherent workflow on top of open scientific engines. Its Device Lab contains 33 device, circuit and fabrication modules and 63 guided experiments, from carrier intuition to measurement fitting and reproducible studies.
 
+Use **Cómo usar / How to use** in the portal for its complete, illustrated manual:
+accounts, projects, editor, verification, simulation, physical implementation,
+device experiments, local DEVSIM, PDKs and administration. See the
+[portal guide](docs/portal-guide.md) and the [shared RTL→GDSII queue](docs/physical-queue.md).
+Physical flows have durable FIFO admission, per-account limits, CPU/RAM/disk
+checks, visible position and cancellation; the default is one heavy flow at a time.
+
 > Device Lab calculations and carrier animations run on the user's computer. The catalogue uses documented analytic/compact reference models; the silicon PN experiment also has an optional local DEVSIM companion.
 
 The Design Studio executes **real RTL lint, simulation, synthesis, batch SPICE simulation, and asynchronous RTL-to-GDSII implementation** inside an isolated IIC-OSIC-TOOLS worker. Projects persist in the browser as multi-file workspaces and can be exported or imported. RF/EM and mixed-signal co-simulation remain staged integrations and are visibly marked as such.

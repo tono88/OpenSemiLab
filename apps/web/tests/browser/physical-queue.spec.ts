@@ -1,0 +1,96 @@
+import { test, expect } from '@playwright/test'
+import { installPortalFixtures, openDemoProject, openPhysical, DEMO_RESULT } from './portal-fixtures'
+
+test('queues a physical job, shows position and cancels without a false failure', async ({ page }) => {
+  const fixture = await installPortalFixtures(page)
+  await openDemoProject(page); await openPhysical(page)
+  await page.getByRole('button', { name: /Ejecutar flujo completo RTL/ }).click()
+  const card = page.getByRole('region', { name: 'Estado del trabajo físico' })
+  await expect(card.getByRole('heading')).toContainText('En cola')
+  await expect(card).toContainText('2 trabajos antes del suyo')
+  await expect(card).toContainText('60 %')
+  await expect(card).toContainText('Tiempo en cola')
+  await expect(page.locator('.result-dock-bar')).toContainText('EN COLA')
+  await expect(page.locator('.physical-config input').first()).toBeDisabled()
+  await card.getByRole('button', { name: 'Cancelar y salir de la cola' }).click()
+  await expect(card.getByRole('heading')).toHaveText('Trabajo cancelado')
+  await expect(page.getByRole('alert')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /Ejecutar flujo completo RTL/ })).toBeEnabled()
+  expect(fixture.submissions()).toBe(1)
+})
+
+test('starts automatically, separates waiting from runtime and waits for cancellation to finish', async ({ page }) => {
+  const fixture = await installPortalFixtures(page)
+  await openDemoProject(page); await openPhysical(page)
+  await page.getByRole('button', { name: /Ejecutar flujo completo RTL/ }).click()
+  const card = page.getByRole('region', { name: 'Estado del trabajo físico' })
+  await expect(card.getByRole('heading')).toContainText('En cola')
+  fixture.update({ status: 'running', elapsed_seconds: 45, stage: 'routing', stage_label: 'Routing', tool: 'OpenROAD', cpu_percent: 280, memory_mb: 2300, process_alive: true })
+  await expect(card.getByRole('heading')).toHaveText('En ejecución')
+  await expect(card).toContainText('Tiempo ejecutando')
+  await expect(card).toContainText('70.0%')
+  await expect(card).toContainText('Espera previa: 1m 15s')
+  await card.getByRole('button', { name: 'Cancelar ejecución' }).click()
+  await expect(card.getByRole('heading')).toHaveText('Cancelando')
+  await expect(card.getByRole('button', { name: 'Cancelando…' })).toBeDisabled()
+  fixture.update({ status: 'cancelled', process_alive: false })
+  await expect(card.getByRole('heading')).toHaveText('Trabajo cancelado')
+})
+
+test('recovers the same queued job on reload without submitting another one', async ({ page }) => {
+  const fixture = await installPortalFixtures(page)
+  await openDemoProject(page); await openPhysical(page)
+  await page.getByRole('button', { name: /Ejecutar flujo completo RTL/ }).click()
+  await expect(page.getByRole('heading', { name: /En cola/ })).toBeVisible()
+  await page.reload()
+  // The library keeps the project; open it again to restore the active job.
+  await page.locator('.project-library .saved-open').first().click()
+  await expect(page.getByRole('heading', { name: /En cola/ })).toBeVisible()
+  expect(fixture.submissions()).toBe(1)
+})
+
+test('temporary disconnection preserves the slot and resumes polling', async ({ page }) => {
+  const fixture = await installPortalFixtures(page)
+  await openDemoProject(page); await openPhysical(page)
+  fixture.interruptPoll()
+  await page.getByRole('button', { name: /Ejecutar flujo completo RTL/ }).click()
+  await expect(page.getByRole('region', { name: 'Estado del trabajo físico' })).toContainText('Conexión interrumpida')
+  await expect(page.getByText('Conexión interrumpida.', { exact: false })).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: /En cola/ })).toBeVisible()
+  expect(fixture.submissions()).toBe(1)
+})
+
+test('an uncertain submission retries with one request id and one accepted job', async ({ page }) => {
+  const fixture = await installPortalFixtures(page)
+  const ids: string[] = []
+  page.on('request', request => { if (new URL(request.url()).pathname === '/api/v1/eda/jobs' && request.method() === 'POST') ids.push(request.postDataJSON().request_id) })
+  await openDemoProject(page); await openPhysical(page)
+  fixture.loseSubmissionResponse()
+  await page.getByRole('button', { name: /Ejecutar flujo completo RTL/ }).click()
+  await expect(page.getByRole('heading', { name: /En cola/ })).toBeVisible()
+  expect(ids).toHaveLength(2)
+  expect(new Set(ids).size).toBe(1)
+})
+
+test('a full queue gives an actionable message and enables retry', async ({ page }) => {
+  const fixture = await installPortalFixtures(page)
+  await openDemoProject(page); await openPhysical(page)
+  fixture.full()
+  await page.getByRole('button', { name: /Ejecutar flujo completo RTL/ }).click()
+  await expect(page.getByRole('alert')).toContainText('La cola física está llena')
+  await expect(page.getByRole('button', { name: /Ejecutar flujo completo RTL/ })).toBeEnabled()
+})
+
+test('completion opens usable result evidence and records a single history entry', async ({ page }) => {
+  const fixture = await installPortalFixtures(page)
+  await openDemoProject(page); await openPhysical(page)
+  await page.getByRole('button', { name: /Ejecutar flujo completo RTL/ }).click()
+  await expect(page.getByRole('heading', { name: /En cola/ })).toBeVisible()
+  fixture.update({ status: 'completed', result: DEMO_RESULT })
+  await expect(page.getByRole('heading', { name: 'Flujo terminado' })).toBeVisible()
+  await page.locator('.wizard-nav button').nth(4).click()
+  await expect(page.getByRole('img', { name: 'Visor físico interactivo' })).toBeVisible()
+  const runs = await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('opensemilab.runs.')).map(key => JSON.parse(localStorage.getItem(key)!)))
+  expect(runs[0]).toHaveLength(1)
+  expect(runs[0][0].id).toBe('demoqueue001')
+})

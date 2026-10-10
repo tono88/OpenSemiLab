@@ -30,6 +30,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
+from physical_queue import PhysicalQueue, QueueError, cpu_capacity
+
 HOST = "0.0.0.0"
 PORT = int(os.getenv("OPENSEMILAB_WORKER_PORT", "9000"))
 WORK_ROOT = Path(os.getenv("OPENSEMILAB_WORK_ROOT", "/tmp/opensemilab-jobs"))
@@ -46,9 +48,28 @@ MAX_ARTIFACT_BUNDLE_BYTES = 40_000_000
 MAX_COMPRESSED_ARTIFACT_SOURCE_BYTES = 250_000_000
 MAX_SIGNOFF_BUNDLE_BYTES = 80_000_000
 MAX_WAVEFORM_BYTES = 5_000_000
-JOBS: dict[str, dict[str, Any]] = {}
-JOBS_LOCK = threading.Lock()
-JOB_CANCEL_EVENTS: dict[str, threading.Event] = {}
+PHYSICAL_QUEUE: PhysicalQueue | None = None
+QUEUE_LOCK = threading.Lock()
+
+
+def physical_queue() -> PhysicalQueue:
+    global PHYSICAL_QUEUE
+    with QUEUE_LOCK:
+        if PHYSICAL_QUEUE is None:
+            PHYSICAL_QUEUE = PhysicalQueue(
+                WORK_ROOT, run_queued_physical,
+                max_running=int(os.getenv("OPENSEMILAB_PHYSICAL_MAX_RUNNING", "1")),
+                max_pending=int(os.getenv("OPENSEMILAB_PHYSICAL_MAX_PENDING", "20")),
+                per_user=int(os.getenv("OPENSEMILAB_PHYSICAL_PER_USER", "2")),
+                cpu_threshold=float(os.getenv("OPENSEMILAB_PHYSICAL_CPU_THRESHOLD", "60")),
+                memory_reserve_mb=int(os.getenv("OPENSEMILAB_PHYSICAL_MEMORY_RESERVE_MB", "1024")),
+                job_memory_mb=int(os.getenv("OPENSEMILAB_PHYSICAL_JOB_MEMORY_MB", "2048")),
+                min_disk_mb=PHYSICAL_MIN_START_FREE_MB,
+                retain=int(os.getenv("OPENSEMILAB_PHYSICAL_RESULT_RETAIN", "20")),
+                retention_days=int(os.getenv("OPENSEMILAB_PHYSICAL_RESULT_RETENTION_DAYS", "7")),
+            )
+            PHYSICAL_QUEUE.start()
+        return PHYSICAL_QUEUE
 
 STRICT_NUMBER = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
 PHYSICAL_STAGE_RULES = [
@@ -1535,6 +1556,7 @@ def execute(
             (job_dir / "physical-config.json").write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
             command = [
                 binary,
+                "--jobs", str(max(1, int(cpu_capacity()) // int(os.getenv("OPENSEMILAB_PHYSICAL_MAX_RUNNING", "1")))),
                 "--pdk-root", selected_pdk_root,
                 "--pdk", pdk,
                 "--scl", scl,
@@ -1718,6 +1740,12 @@ def execute(
 
 
 class Handler(BaseHTTPRequestHandler):
+    def owner(self) -> str:
+        owner = self.headers.get("X-OpenSemiLab-User", "")
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", owner):
+            raise QueueError("An authenticated user is required for physical jobs", 401)
+        return owner
+
     def send_json(self, status: int, body: dict[str, Any]) -> None:
         encoded = json.dumps(body).encode()
         self.send_response(status)
@@ -1728,13 +1756,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if self.path == "/health":
-            self.send_json(200, capabilities())
-        elif self.path.startswith("/jobs/"):
-            job_id = self.path.removeprefix("/jobs/").split("?", 1)[0]
-            with JOBS_LOCK:
-                job = JOBS.get(job_id)
-                body = dict(job) if job else None
-            self.send_json(200, body) if body else self.send_json(404, {"error": "job not found"})
+            self.send_json(200, {**capabilities(), "physical_queue": physical_queue().summary()})
+        elif self.path == "/jobs" or re.fullmatch(r"/jobs/[A-Za-z0-9]{1,32}", self.path):
+            try:
+                owner = self.owner()
+                body = {"jobs": physical_queue().list_owned(owner)} if self.path == "/jobs" else physical_queue().get(self.path.removeprefix("/jobs/"), owner)
+                self.send_json(200, body)
+            except QueueError as error:
+                self.send_json(error.status, {"error": str(error)})
         else:
             self.send_json(404, {"error": "not found"})
 
@@ -1742,16 +1771,13 @@ class Handler(BaseHTTPRequestHandler):
         cancel_match = re.fullmatch(r"/jobs/([A-Za-z0-9]{1,32})/cancel", self.path)
         if cancel_match:
             job_id = cancel_match.group(1)
-            with JOBS_LOCK:
-                job = JOBS.get(job_id)
-                event = JOB_CANCEL_EVENTS.get(job_id)
-                if job is None:
-                    self.send_json(404, {"error": "job not found"}); return
-                if job.get("status") not in {"queued", "running"} or event is None:
-                    self.send_json(409, {"error": "job is no longer active"}); return
-                event.set()
-                job["cancellation_requested_at"] = time.time()
-            self.send_json(202, {"job_id": job_id, "status": "cancelling"}); return
+            try:
+                self.send_json(202, physical_queue().cancel(job_id, self.owner()))
+            except QueueError as error:
+                self.send_json(error.status, {"error": str(error)})
+            except OSError as error:
+                self.send_json(503, {"error": f"No se pudo guardar la cancelación: {error}. Intente nuevamente o informe al administrador."})
+            return
         if self.path not in {"/run", "/jobs"}:
             self.send_json(404, {"error": "not found"}); return
         try:
@@ -1759,34 +1785,23 @@ class Handler(BaseHTTPRequestHandler):
             if length <= 0 or length > MAX_BODY:
                 raise ValueError("invalid request size")
             payload = json.loads(self.rfile.read(length))
+            if not isinstance(payload, dict):
+                raise ValueError("request must be an object")
             if self.path == "/jobs":
                 if payload.get("action") != "physical":
                     raise ValueError("only physical implementation uses asynchronous jobs")
-                job_id = uuid.uuid4().hex[:12]
-                with JOBS_LOCK:
-                    if any(job.get("status") in {"queued", "running"} for job in JOBS.values()):
-                        raise RuntimeError("another physical implementation job is already active")
-                    if len(JOBS) >= 5:
-                        terminal = [key for key, job in JOBS.items() if job.get("status") in {"completed", "failed", "cancelled"}]
-                        if terminal:
-                            oldest = min(terminal, key=lambda key: JOBS[key].get("created_at", 0))
-                            JOBS.pop(oldest, None)
-                    JOBS[job_id] = {
-                        "job_id": job_id,
-                        "action": "physical",
-                        "status": "queued",
-                        "created_at": time.time(),
-                        "heartbeat_at": time.time(),
-                        "elapsed_seconds": 0,
-                        "last_output_seconds_ago": 0,
-                        "live_output": "",
-                        "process_alive": False,
-                    }
-                    JOB_CANCEL_EVENTS[job_id] = threading.Event()
-                threading.Thread(target=run_background_job, args=(job_id, payload), daemon=True).start()
-                self.send_json(202, {"job_id": job_id, "action": "physical", "status": "queued"})
+                sources = validate_sources(payload.get("sources"), "physical")
+                options = payload.get("physical")
+                if not isinstance(options, dict):
+                    raise ValueError("physical options are required")
+                validate_physical_top(sources, payload.get("top", "top"), options.get("clock_port", "clk"))
+                self.send_json(202, physical_queue().submit(payload, self.owner()))
             else:
+                if payload.get("action") == "physical":
+                    raise ValueError("Submit RTL-to-GDSII to /jobs to respect the process queue")
                 self.send_json(200, execute(payload))
+        except QueueError as error:
+            self.send_json(error.status, {"error": str(error)})
         except (ValueError, json.JSONDecodeError) as error:
             self.send_json(400, {"error": str(error)})
         except RuntimeError as error:
@@ -1798,47 +1813,31 @@ class Handler(BaseHTTPRequestHandler):
         print(f"worker {self.address_string()} {format % args}", flush=True)
 
 
-def run_background_job(job_id: str, payload: dict[str, Any]) -> None:
-    with JOBS_LOCK:
-        JOBS[job_id]["status"] = "running"
-        JOBS[job_id]["started_at"] = time.time()
+def run_queued_physical(job_id: str, payload: dict[str, Any], progress_callback: Callable, cancel_event: threading.Event) -> dict[str, Any]:
+    latest: dict[str, Any] = {}
     try:
         def report_progress(progress: dict[str, Any]) -> None:
-            with JOBS_LOCK:
-                job = JOBS.get(job_id)
-                if job is not None:
-                    job.update(progress)
-                    job["heartbeat_at"] = time.time()
-
-        result = execute(payload, progress_callback=report_progress, cancel_event=JOB_CANCEL_EVENTS[job_id])
+            latest.update(progress)
+            progress_callback(progress)
+        result = execute(payload, progress_callback=report_progress, cancel_event=cancel_event)
         result["job_id"] = job_id
-        status = "cancelled" if result.get("cancelled") else ("completed" if result["success"] else "failed")
-        with JOBS_LOCK:
-            JOBS[job_id].update(status=status, result=result, process_alive=False, finished_at=time.time())
+        return result
     except Exception as error:
         diagnostic = "".join(traceback.format_exception(type(error), error, error.__traceback__))
-        with JOBS_LOCK:
-            job = JOBS[job_id]
-            live_output = str(job.get("live_output", ""))
-            message = f"{type(error).__name__}: {error}"
-            output = (live_output + ("\n" if live_output else "") + f"[OpenSemiLab] Internal failure after the last captured output: {message}")[-MAX_OUTPUT:]
-            fallback = {
-                "job_id": job_id, "action": "physical", "engine": "LibreLane/OpenROAD",
-                "success": False, "exit_code": 70, "output": output,
-                "duration_ms": round(float(job.get("elapsed_seconds", 0)) * 1000),
-                "artifacts": [
-                    text_artifact("execution.log", output),
-                    text_artifact("execution-diagnostics.txt", diagnostic),
-                ],
-                "diagnostics": {"schema": "opensemilab.execution-diagnostics/v1", "internal_error": message},
-            }
-            job.update(status="failed", error=message, result=fallback, process_alive=False, finished_at=time.time())
-    finally:
-        with JOBS_LOCK:
-            JOB_CANCEL_EVENTS.pop(job_id, None)
+        live_output = str(latest.get("live_output", ""))
+        message = f"{type(error).__name__}: {error}"
+        output = (live_output + ("\n" if live_output else "") + f"[OpenSemiLab] Internal failure after the last captured output: {message}")[-MAX_OUTPUT:]
+        return {
+            "job_id": job_id, "action": "physical", "engine": "LibreLane/OpenROAD",
+            "success": False, "exit_code": 70, "output": output,
+            "duration_ms": round(float(latest.get("elapsed_seconds", 0)) * 1000),
+            "artifacts": [text_artifact("execution.log", output), text_artifact("execution-diagnostics.txt", diagnostic)],
+            "diagnostics": {"schema": "opensemilab.execution-diagnostics/v1", "internal_error": message},
+        }
 
 
 if __name__ == "__main__":
     WORK_ROOT.mkdir(parents=True, exist_ok=True)
+    physical_queue()
     print(f"OpenSemiLab IIC-OSIC worker listening on {HOST}:{PORT}", flush=True)
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()

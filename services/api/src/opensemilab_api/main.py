@@ -167,6 +167,8 @@ def eda_capabilities(_user: User = Depends(get_current_user)) -> dict:
 
 @app.post("/api/v1/eda/run")
 def run_eda_action(request: EdaRunRequest, _user: User = Depends(get_current_user)) -> dict:
+    if request.action == "physical":
+        raise HTTPException(status_code=422, detail="Envíe RTL→GDSII a /api/v1/eda/jobs para respetar la cola de procesos.")
     try:
         response = httpx.post(f"{eda_worker_url}/run", json=request.model_dump(), timeout=100)
         if response.status_code >= 400:
@@ -184,10 +186,10 @@ def start_eda_job(request: EdaRunRequest, _user: User = Depends(get_current_user
     if request.action != "physical":
         raise HTTPException(status_code=422, detail="Only physical implementation uses asynchronous jobs")
     try:
-        response = httpx.post(f"{eda_worker_url}/jobs", json=request.model_dump(), timeout=10)
+        response = httpx.post(f"{eda_worker_url}/jobs", json=request.model_dump(), headers={"X-OpenSemiLab-User": _user.id}, timeout=15)
         if response.status_code >= 400:
             detail = response.json().get("error", response.text)
-            raise HTTPException(status_code=response.status_code, detail=detail)
+            raise HTTPException(status_code=response.status_code, detail=detail, headers={"Retry-After": "30"} if response.status_code == 429 else None)
         return response.json()
     except HTTPException:
         raise
@@ -195,12 +197,22 @@ def start_eda_job(request: EdaRunRequest, _user: User = Depends(get_current_user
         raise HTTPException(status_code=503, detail=f"EDA execution service unavailable: {error}") from error
 
 
+@app.get("/api/v1/eda/jobs")
+def list_eda_jobs(_user: User = Depends(get_current_user)) -> dict:
+    try:
+        response = httpx.get(f"{eda_worker_url}/jobs", headers={"X-OpenSemiLab-User": _user.id}, timeout=15)
+        response.raise_for_status()
+        return response.json()
+    except (httpx.HTTPError, ValueError) as error:
+        raise HTTPException(status_code=503, detail=f"No se pudo consultar la cola de procesos: {error}") from error
+
+
 @app.get("/api/v1/eda/jobs/{job_id}")
 def get_eda_job(job_id: str, _user: User = Depends(get_current_user)) -> dict:
     if not job_id.isalnum() or len(job_id) > 32:
         raise HTTPException(status_code=422, detail="Invalid job identifier")
     try:
-        response = httpx.get(f"{eda_worker_url}/jobs/{job_id}", timeout=120)
+        response = httpx.get(f"{eda_worker_url}/jobs/{job_id}", headers={"X-OpenSemiLab-User": _user.id}, timeout=30)
         if response.status_code >= 400:
             detail = response.json().get("error", response.text)
             raise HTTPException(status_code=response.status_code, detail=detail)
@@ -216,7 +228,7 @@ def cancel_eda_job(job_id: str, _user: User = Depends(get_current_user)) -> dict
     if not job_id.isalnum() or len(job_id) > 32:
         raise HTTPException(status_code=422, detail="Invalid job identifier")
     try:
-        response = httpx.post(f"{eda_worker_url}/jobs/{job_id}/cancel", timeout=15)
+        response = httpx.post(f"{eda_worker_url}/jobs/{job_id}/cancel", headers={"X-OpenSemiLab-User": _user.id}, timeout=15)
         if response.status_code >= 400:
             detail = response.json().get("error", response.text)
             raise HTTPException(status_code=response.status_code, detail=detail)

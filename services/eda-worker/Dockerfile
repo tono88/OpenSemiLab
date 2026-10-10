@@ -3,6 +3,7 @@ FROM hpretl/iic-osic-tools:latest
 USER root
 WORKDIR /opt/opensemilab-worker
 COPY worker.py ./worker.py
+COPY physical_queue.py ./physical_queue.py
 COPY entrypoint.sh ./entrypoint.sh
 # Windows checkouts may convert shell scripts to CRLF. Normalize the copied
 # file inside the Linux image so the shebang never becomes "bash\r".

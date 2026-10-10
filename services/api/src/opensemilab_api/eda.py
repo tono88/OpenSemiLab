@@ -30,6 +30,8 @@ class EdaRunRequest(BaseModel):
     adapter: dict[str, Any] | None = None
     encodings: dict[str, Literal["utf-8", "base64"]] | None = None
     sources: dict[str, str]
+    project_id: str | None = Field(None, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    request_id: str | None = Field(None, pattern=r"^[A-Za-z0-9-]{16,64}$")
 
     @model_validator(mode="after")
     def physical_options_required(self):

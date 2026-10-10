@@ -2,6 +2,7 @@ import importlib.util
 import base64
 import io
 import json
+import sys
 import tempfile
 import threading
 import time
@@ -13,6 +14,7 @@ from unittest.mock import patch
 
 
 WORKER_PATH = Path(__file__).resolve().parents[1] / "worker.py"
+sys.path.insert(0, str(WORKER_PATH.parent))
 SPEC = importlib.util.spec_from_file_location("opensemilab_worker", WORKER_PATH)
 worker = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader
@@ -394,17 +396,14 @@ Index   v-sweep   v(a)       v(y)
 
     def test_background_failure_keeps_live_log_and_diagnostic_artifacts(self):
         job_id = "diagnostic01"
-        worker.JOBS[job_id] = {
-            "job_id": job_id, "status": "queued", "live_output": "LibreLane reached routing", "elapsed_seconds": 12,
-        }
-        worker.JOB_CANCEL_EVENTS[job_id] = worker.threading.Event()
-        with patch.object(worker, "execute", side_effect=ValueError("could not convert string to float: 'E'")):
-            worker.run_background_job(job_id, {"action": "physical"})
-
-        job = worker.JOBS.pop(job_id)
-        self.assertEqual(job["status"], "failed")
-        self.assertIn("LibreLane reached routing", job["result"]["output"])
-        self.assertTrue(any(item["name"] == "execution-diagnostics.txt" for item in job["result"]["artifacts"]))
+        def fails_after_progress(payload, progress_callback, cancel_event):
+            progress_callback({"live_output": "LibreLane reached routing", "elapsed_seconds": 12})
+            raise ValueError("could not convert string to float: 'E'")
+        with patch.object(worker, "execute", side_effect=fails_after_progress):
+            result = worker.run_queued_physical(job_id, {"action": "physical"}, lambda value: None, threading.Event())
+        self.assertFalse(result["success"])
+        self.assertIn("LibreLane reached routing", result["output"])
+        self.assertTrue(any(item["name"] == "execution-diagnostics.txt" for item in result["artifacts"]))
 
     def test_vhdl_simulation_runs_three_ghdl_phases_and_collects_vcd(self):
         payload = {"action": "vhdl", "top": "tb_top", "sources": {"rtl/top.vhd": "entity top is end; architecture rtl of top is begin end;"}}

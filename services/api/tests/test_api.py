@@ -583,7 +583,48 @@ def test_physical_job_cancel_is_forwarded_to_worker():
         response = client.post("/api/v1/eda/jobs/abc123/cancel")
     assert response.status_code == 202
     assert response.json()["status"] == "cancelling"
-    post.assert_called_once_with("http://localhost:9000/jobs/abc123/cancel", timeout=15)
+    assert post.call_args.kwargs["headers"]["X-OpenSemiLab-User"]
+    post.assert_called_once_with("http://localhost:9000/jobs/abc123/cancel", headers=post.call_args.kwargs["headers"], timeout=15)
+
+
+def test_physical_queue_identity_comes_from_session_and_cannot_be_spoofed():
+    payload = {"action": "physical", "top": "top", "sources": {"rtl/top.sv": "module top(input clk); endmodule"},
+               "physical": {"pdk": "sky130A"}, "project_id": "project-one", "request_id": "1234567890abcdef", "owner_id": "intruder"}
+    with patch("opensemilab_api.main.httpx.post", return_value=httpx.Response(202, json={"job_id": "abc123", "status": "queued", "jobs_ahead": 2})) as post:
+        created = client.post("/api/v1/eda/jobs", json=payload, headers={"X-OpenSemiLab-User": "intruder"})
+    assert created.status_code == 202
+    assert created.json()["jobs_ahead"] == 2
+    assert post.call_args.kwargs["headers"]["X-OpenSemiLab-User"] != "intruder"
+    assert "owner_id" not in post.call_args.kwargs["json"]
+    assert post.call_args.kwargs["json"]["project_id"] == "project-one"
+
+
+def test_physical_jobs_cannot_bypass_queue_via_synchronous_endpoint():
+    with patch("opensemilab_api.main.httpx.post") as post:
+        response = client.post("/api/v1/eda/run", json={"action": "physical", "sources": {"rtl/top.sv": "module top; endmodule"}, "physical": {"pdk": "sky130A"}})
+    assert response.status_code == 422
+    post.assert_not_called()
+
+
+def test_queue_full_is_actionable_and_job_reads_keep_authenticated_owner():
+    payload = {"action": "physical", "sources": {"rtl/top.sv": "module top; endmodule"}, "physical": {"pdk": "sky130A"}}
+    with patch("opensemilab_api.main.httpx.post", return_value=httpx.Response(429, json={"error": "La cola está llena"})):
+        response = client.post("/api/v1/eda/jobs", json=payload)
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "30"
+    with patch("opensemilab_api.main.httpx.get", return_value=httpx.Response(404, json={"error": "Trabajo no encontrado"})) as get:
+        response = client.get("/api/v1/eda/jobs/abc123", headers={"X-OpenSemiLab-User": "intruder"})
+    assert response.status_code == 404
+    assert get.call_args.kwargs["headers"]["X-OpenSemiLab-User"] != "intruder"
+
+
+def test_active_job_discovery_is_scoped_to_authenticated_user():
+    request = httpx.Request("GET", "http://localhost:9000/jobs")
+    with patch("opensemilab_api.main.httpx.get", return_value=httpx.Response(200, request=request, json={"jobs": []})) as get:
+        response = client.get("/api/v1/eda/jobs")
+    assert response.status_code == 200
+    assert response.json() == {"jobs": []}
+    assert get.call_args.kwargs["headers"]["X-OpenSemiLab-User"]
 
 
 def test_specialized_eda_actions_share_the_validated_contract():

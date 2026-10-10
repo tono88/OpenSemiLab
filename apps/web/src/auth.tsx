@@ -77,6 +77,12 @@ export function useAuth() {
 
 export function useLocale(): ['es' | 'en', (l: 'es' | 'en') => void] {
   const [locale, setLocale] = useState<'es' | 'en'>(() => localStorage.getItem('opensemilab.locale') === 'en' ? 'en' : 'es')
-  const change = (l: 'es' | 'en') => { setLocale(l); localStorage.setItem('opensemilab.locale', l) }
+  useEffect(() => {
+    const sync = () => setLocale(localStorage.getItem('opensemilab.locale') === 'en' ? 'en' : 'es')
+    window.addEventListener('opensemilab:locale', sync)
+    window.addEventListener('storage', sync)
+    return () => { window.removeEventListener('opensemilab:locale', sync); window.removeEventListener('storage', sync) }
+  }, [])
+  const change = (l: 'es' | 'en') => { setLocale(l); localStorage.setItem('opensemilab.locale', l); window.dispatchEvent(new Event('opensemilab:locale')) }
   return [locale, change]
 }

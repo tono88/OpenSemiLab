@@ -6,6 +6,7 @@ function TopBar({ onNav }: { onNav: (h: string) => void }) {
   return <header className="pub-top">
     <div className="brand" onClick={() => onNav('#/')} style={{ cursor: 'pointer' }}><div className="mark">OS</div><div><strong>OpenSemiLab</strong><small>UNIS · LAB</small></div></div>
     <nav className="pub-links">
+      <button onClick={() => onNav('#/guia')}>{locale === 'es' ? 'Cómo usar' : 'How to use'}</button>
       <button onClick={() => onNav('#/equipo')}>Equipo</button>
       <button onClick={() => onNav('#/galeria')}>Galería</button>
       <button onClick={() => onNav('#/terminos')}>Términos</button>
